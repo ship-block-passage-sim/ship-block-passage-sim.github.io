@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship-Block Passage Simulator</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <aside id="left">
+    <header><h1>Ship-Block Passage Simulator</h1><p class="sub">4 wheel-legs + lift · units: mm</p></header>
+    <div class="row">
+      <select id="preset" title="Preset"></select>
+      <button id="btnReset" title="Restore the values of the selected preset">Reset</button>
+    </div>
+    <form id="params" autocomplete="off"></form>
+    <div id="warnings"></div>
+    <div class="row wrap">
+      <button id="btnURDF" class="primary">Save URDF</button>
+      <button id="btnSRDF">Save SRDF</button>
+      <button id="btnSaveParams">Save parameters</button>
+      <button id="btnLoadParams">Load</button>
+      <input type="file" id="fileParams" accept="application/json" hidden>
+    </div>
+    <details id="manual">
+      <summary>Manual pose (for checking the model)</summary>
+      <div id="manualSliders"></div>
+      <p class="hint">Moving a slider shows this pose instead of the planned motion and marks colliding parts in red.</p>
+    </details>
+  </aside>
+
+  <main>
+    <div id="toolbar">
+      <label>Environment <select id="env"></select></label>
+      <label>Task <select id="task"></select></label>
+      <button id="btnPlan" class="primary">Plan</button>
+      <button id="btnBatchGroup" title="Plan every task in the current environment group">Batch: group</button>
+      <button id="btnBatchAll" title="Plan every task in every environment">Batch: all</button>
+      <span id="busy"></span>
+    </div>
+    <div id="envbar">
+      <span id="envSource"></span>
+      <button id="btnEnvLoad" title="Load the environment table from a CSV file. The file is read inside this browser; nothing is uploaded.">Load environment CSV</button>
+      <button id="btnEnvTemplate" title="Download the example table as a starting point for your own CSV">CSV template</button>
+      <button id="btnEnvReset" hidden title="Forget the loaded CSV in this browser and return to the built-in examples">Back to examples</button>
+      <input type="file" id="fileEnv" accept=".csv,text/csv" hidden>
+      <div id="envErrors" hidden></div>
+    </div>
+    <div id="view">
+      <canvas id="gl"></canvas>
+      <canvas id="hud"></canvas>
+      <div id="overlayMsg" hidden></div>
+    </div>
+    <div id="viewbtns">
+      <button data-view="iso">Default</button><button data-view="side">Side</button><button data-view="front">Front</button><button data-view="top">Top</button>
+      <label title="Wall opacity">Wall <input type="range" id="wallOpacity" min="0.15" max="1" step="0.05" value="0.45"></label>
+      <label><input type="checkbox" id="showSupport" checked> Support polygon &amp; CoM</label>
+      <label><input type="checkbox" id="showSection" checked> Section view</label>
+    </div>
+    <div id="timeline">
+      <button id="btnPlay">▶</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" step="1">
+      <span id="timeLabel">0.0 / 0.0 s</span>
+      <select id="speed"><option value="0.5">0.5×</option><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option></select>
+      <button id="btnVideo" title="Save the current result as MP4">Save video</button>
+      <button id="btnTraj" title="Save the joint trajectory (JSON, SI units)">Save trajectory</button>
+    </div>
+  </main>
+
+  <aside id="right">
+    <section id="resultCard"><h2>Result</h2><div id="result" class="muted">Choose an environment and a task, then press <b>Plan</b>.</div></section>
+    <section><h2>Phases</h2><ol id="phases"></ol></section>
+    <section id="batchSec">
+      <h2>Batch results <span id="batchSummary" class="muted"></span></h2>
+      <div class="row wrap">
+        <button id="btnBatchVideos" disabled>Save all videos</button>
+        <button id="btnBatchCSV" disabled>Save CSV</button>
+        <label class="mini"><input type="checkbox" id="onlyFail"> Failures only</label>
+      </div>
+      <div id="batchWrap"><table id="batch"><thead><tr><th>Environment / task</th><th>Result</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section><h2>Options</h2>
+      <div class="opt">
+        <label><span>Environment clearance</span><input type="number" id="optEnvMargin" value="10" min="0" step="1"><span class="u">mm</span></label>
+        <label><span>Self-collision clearance</span><input type="number" id="optSelfMargin" value="5" min="0" step="1"><span class="u">mm</span></label>
+        <label><span>Stability margin</span><input type="number" id="optStab" value="20" min="0" step="5"><span class="u">mm</span></label>
+        <label><span>Longis to cross</span><input type="number" id="optCross" value="1" min="1" max="4" step="1"><span class="u"></span></label>
+        <label><span>Video speed</span><input type="number" id="optVidSpeed" value="3" min="1" max="10" step="1"><span class="u">×</span></label>
+      </div>
+    </section>
+  </aside>
+</div>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

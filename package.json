@@ -1,0 +1,16 @@
+{
+  "name": "ship-block-passage-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Parametric wheel-leg + lift robot: URDF export and passage planning through ship-block access holes / over longitudinals (browser app).",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "plan": "node tools/plan.mjs",
+    "videos": "node tools/batch_videos.mjs",
+    "test": "node tests/run_all.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}
