@@ -96,13 +96,13 @@ export function buildRobot(params) {
   const COL = { plate: 0xb9c0c8, pay: 0xd9434f, act: 0x3a3f47, tube: 0x18191c, wheel: 0x2b2b2e, lift: 0x8e98a6, rod: 0xd0d5dc, foot: 0x30343a };
 
   // ---- base
-  // The yaw actuators are inscribed in the plate corners (tangent to both edges from the inside), so the plate
-  // outline is a rectangle whose corners are rounded with the actuator radius: two crossed boxes + the actuator cylinders.
+  // The yaw actuators stand on top of the plate, inside its corners (tangent to both plate edges from the inside).
+  // The pitch axis is at the mid-height of the yaw actuator, so the hip is plateT/2 + actT/2 above the plate centre.
   const base = addLink('base_link', -1, {});
+  const hipZ = P.plateT / 2 + T / 2;
   if (D > Math.min(P.plateL, P.plateW) / 2) warnings.push('The actuator diameter is more than half of the plate width/length: the corner actuators overlap each other.');
-  const cx = Math.max(1, P.plateL / 2 - D / 2), cy = Math.max(1, P.plateW / 2 - D / 2);
-  addShape(base, 'plate', 'plate', box(P.plateL / 2, cy, P.plateT / 2), [0, 0, 0], [0, 0, 0], COL.plate);
-  addShape(base, 'plate_ends', 'plate', box(cx, P.plateW / 2, P.plateT / 2), [0, 0, 0], [0, 0, 0], COL.plate);
+  if (P.payH > 0 && P.payL / 2 > P.plateL / 2 - D && P.payW / 2 > P.plateW / 2 - D) warnings.push('The payload overlaps the yaw actuators standing on the plate corners: reduce the payload length or width.');
+  addShape(base, 'plate', 'plate', box(P.plateL / 2, P.plateW / 2, P.plateT / 2), [0, 0, 0], [0, 0, 0], COL.plate);
   addMass(base, P.bodyMass, [0, 0, 0]);
   if (P.payL > 0 && P.payW > 0 && P.payH > 0) {
     addShape(base, 'payload', 'payload', box(P.payL / 2, P.payW / 2, P.payH / 2), [0, 0, P.plateT / 2 + P.payH / 2], [0, 0, 0], COL.pay);
@@ -114,7 +114,7 @@ export function buildRobot(params) {
   const hips = [], yaw0 = [];
   for (let i = 0; i < 4; i++) {
     const fx = i < 2 ? 1 : -1, fy = i % 2 === 0 ? 1 : -1;
-    hips.push([fx * (P.plateL / 2 - D / 2), fy * (P.plateW / 2 - D / 2), 0]);     // inside the corner, tangent to both plate edges
+    hips.push([fx * (P.plateL / 2 - D / 2), fy * (P.plateW / 2 - D / 2), hipZ]);  // on the plate, inside the corner, tangent to both plate edges
     yaw0.push(side ? fy * Math.PI / 2 : (fx > 0 ? 0 : Math.PI));
   }
   const lim = [P.yaw1Lim * DEG, P.pitch1Lim * DEG, P.pitch2Lim * DEG, P.yaw2Lim * DEG];

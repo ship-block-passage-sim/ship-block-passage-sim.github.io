@@ -145,7 +145,7 @@ export class Viewer {
       if (s.kind === 'wheel') { // hub stripe so that wheel rotation is visible
         const hub = new THREE.Mesh(new THREE.BoxGeometry(s.r * 1.5, s.r * 0.28, 2 * s.h + 4), new THREE.MeshStandardMaterial({ color: 0x3f8cff, roughness: 0.5 })); m.add(hub);
       }
-      if (pay) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0xa01525 })));
+      if (pay || s.kind === 'plate') m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: pay ? 0xa01525 : 0x4b5563 })));
       this.robotGroup.add(m); this.meshes.push(m);
     }
     this.dirty = true;

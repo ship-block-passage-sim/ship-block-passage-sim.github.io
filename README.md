@@ -35,14 +35,15 @@ The green outline is the support polygon and the green dot the centre of mass. A
 | Group | Fields | Meaning in the model |
 |---|---|---|
 | 1. Centre plate | length, width, thickness | Length = travel direction (X). The hips and the lift attach to it |
-| 2. Actuator | diameter, thickness | All four joint actuators of a leg are the same cylinder. Yaw1 sits inside each plate corner, tangent to both plate edges from the inside (the plate corner is rounded with the actuator radius); Pitch1 is next to it, just outside the plate |
+| 2. Actuator | diameter, thickness | All four joint actuators of a leg are the same cylinder. Yaw1 stands on top of the plate inside each corner, tangent to both plate edges from the inside; Pitch1 is next to it, just outside the plate |
 | 3. Leg links | L1, L2, L3 | Pitch1–Pitch2, Pitch2–Yaw2, Yaw2–wheel axis |
 | 4. Payload | length, width, height | A box centred on top of the plate (used for collision and centre of mass) |
 | 5. Lift leg spacing | lengthwise (X), crosswise (Y) | Distance between the fold shafts, distance between left and right legs |
 | 6. Lift legs | length, stroke | Pivot-to-sole length when retracted, linear extension |
 
 `Advanced settings` holds the geometry assumptions (wheel diameter/width, link tube diameter, zero direction of Yaw1, lift folding, leg width,
-pivot position), joint limits and masses. The yaw and pitch actuators are centred on the mid-plane of the plate.
+pivot position), joint limits and masses. The pitch axis is at the mid-height of the yaw actuator, i.e. half an actuator thickness
+above the top of the plate.
 
 ### Modelling assumptions
 
