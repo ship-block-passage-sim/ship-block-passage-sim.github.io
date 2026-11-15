@@ -21,6 +21,7 @@ export function xExtent(p, c) {
 /** Columns of the environment table: [name, description]. Lists inside a cell are separated by ";". */
 export const ENV_COLUMNS = [
   ['id', 'Unique name of the environment (also used in file names). Required.'],
+  ['source', 'Where the data comes from (e.g. a shipyard or a test plan). The app offers one filter button per source.'],
   ['group', 'Group heading in the environment list.'],
   ['label', 'Text shown in the list and in videos.'],
   ['floor_x', 'Floor size across the longis. Default: longi_n x longi_pitch.'],
@@ -165,7 +166,7 @@ function rowToEnv(rec) {
   const edges = [0, ...sorted.flatMap(l => [l.c - l.prof.tw / 2, l.c + l.prof.tw / 2]), floorX], beads = [];
   for (const y of nums('bead_y')) for (let j = 0; j < edges.length; j += 2) beads.push({ x0: edges[j], x1: edges[j + 1], y, name: 'bead' });
 
-  return { id, group: str('group') || 'Environments', label: str('label') || id, floor: { x0: 0, x1: floorX, y0: 0, y1: floorY, name: 'floor' }, longis, walls, beads, stepFile: str('step_file'), stepPrefix: str('step_prefix') };
+  return { id, source: str('source'), group: str('group') || 'Environments', label: str('label') || id, floor: { x0: 0, x1: floorX, y0: 0, y1: floorY, name: 'floor' }, longis, walls, beads, stepFile: str('step_file'), stepPrefix: str('step_prefix') };
 }
 
 /** CSV text -> { envs, errors }. Rows with errors are skipped and reported. */

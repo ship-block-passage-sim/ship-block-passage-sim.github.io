@@ -21,14 +21,19 @@ The app is static files only, so deploying later means copying the folder to any
 
 1. Enter the dimensions on the left (table below). The 3D model updates immediately.
 2. When the page opens it asks for the environment table: press **Load environment CSV…** and choose the file (or drop it on the page).
-   All environments in the file are loaded at once. Then pick an **Environment** and a **Task** (hole passage / longi crossing) → **Plan**.
+   All environments in the file are loaded at once. The **Source** buttons above the 3D view narrow the list to one data source
+   (one button per value of the CSV column `source`). Then pick an **Environment** and a **Task** (hole passage / longi crossing) → **Plan**.
 3. Check the motion with the timeline. The right panel shows the result, the failure reason and the phase list (click a phase to jump to it).
-4. **Save video** writes the current result as MP4. **Batch: group / Batch: all** plan many environments at once; **Save all videos** then
+4. **Save video** writes the current result as MP4. **Batch: group / Batch: all** plan many environments at once (Batch: all covers the
+   current source selection); **Save all videos** then
    writes `SUCCESS__….mp4` / `FAIL__….mp4` into a folder you choose. **Save CSV** writes the result table.
 5. **Save URDF / Save SRDF** and **Save trajectory** (joint trajectory as JSON in m / rad / s) hand the model and motion to MoveIt2, RViz or other tools.
 
 The upper view is 3D, the lower strip is a section view (hole task: side section through the hole centre; longi task: front view).
 The green outline is the support polygon and the green dot the centre of mass. At a failure, the colliding parts are shown in red.
+
+**All environments** (below the 3D view) lays out every environment of the current source selection side by side in one scene.
+After a batch the tiles are coloured green (all tasks passed), amber (some) or red (none). Click a tile to open that environment.
 
 ## Input parameters
 
@@ -83,6 +88,7 @@ Coordinates: floor from (0, 0) to (`floor_x`, `floor_y`), floor top at z = 0, lo
 | Column | Meaning | Default |
 |---|---|---|
 | `id` | unique name, also used in video file names | required |
+| `source` | where the data comes from (e.g. a shipyard or a test plan); one filter button per value | none |
 | `group`, `label` | heading and text in the environment list | `Environments`, the id |
 | `floor_x`, `floor_y` | floor size across / along the longis | `longi_n × longi_pitch`; 4000 with a wall, 2400 without |
 | `longi_kind` | `T`, `L` or `FB` (flat bar); one value or one per longi | `T` |
@@ -177,6 +183,16 @@ node tools/batch_videos.mjs --group "My vessel" --out videos               # pla
 node tools/batch_videos.mjs --all --params robot_params.json --only fail   # videos of the failures only
 ```
 
+### Intro film
+
+```bash
+node tools/make_intro_video.mjs --envs private/environments.csv --out videos/intro/intro.mp4
+```
+
+Renders a ~1 minute product film of the app (1920×1080, 30 fps): each feature is located in the app, then shown on a clean stage.
+It plans every task of the table first (about a minute), then drives the app frame by frame in headless Chrome. The film shows the
+environment table that is passed in, so treat the file like the table.
+
 `robot_params.json` is the file written by **Save parameters** in the app. `batch_videos.mjs` drives the same web app in headless Chrome
 and writes the MP4s plus `results.csv` and `results.json` into `videos/` (a few seconds per video). If the videos come out black, add
 `--software` (renders without the GPU; slower).
@@ -216,7 +232,7 @@ src/planner.js            motion planning (gaits, RRT-Connect, search)
 src/viewer.js, app.js     3D display, UI, MP4 export
 src/worker.js             Web Worker for planning
 src/presets.js            presets
-tools/                    server, command-line planning, batch video export
+tools/                    server, command-line planning, batch video export, intro film
 private/                  (git-ignored) your own environments.csv
 tests/                    verification scripts
 vendor/                   three.js, OrbitControls, mp4-muxer (MIT)

@@ -62,10 +62,36 @@ function paramSummary(p = S.params) {
 }
 
 // ------------------------------------------------------------------ environment / task
+/** Environments of the current source selection (all of them when the table has no source column). */
+function visibleEnvs() { return listEnvs().filter(e => !S.source || e.source === S.source); }
+/** One filter button per data source of the loaded table (hidden when there are fewer than two). */
+function renderSourceChips() {
+  const box = $('sourceChips'), all = listEnvs(), sources = [...new Set(all.map(e => e.source).filter(Boolean))];
+  if (S.source && !sources.includes(S.source)) S.source = '';
+  box.hidden = sources.length < 2; box.innerHTML = '';
+  if (box.hidden) return;
+  const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = 'Source'; box.appendChild(lbl);
+  for (const s of ['', ...sources]) {
+    const b = document.createElement('button'), n = s ? all.filter(e => e.source === s).length : all.length;
+    b.dataset.source = s; b.className = (S.source || '') === s ? 'on' : '';
+    b.innerHTML = `${esc(s || 'All')}<span class="n">${n}</span>`;
+    b.onclick = () => setSource(s); box.appendChild(b);
+  }
+}
+/** Restrict the environment list, the overview and "Batch: all" to one data source ('' = all). */
+function setSource(s) {
+  S.source = s || ''; renderSourceChips(); buildEnvSelect();
+  const wasOverview = !!S.overview;
+  if (!visibleEnvs().some(e => e.id === S.env.id)) selectEnv(visibleEnvs()[0].id);
+  else $('env').value = S.env.id;
+  if (wasOverview) { setOverview(false, { fit: false }); setOverview(true); }
+  updateBatchLabel(); renderBatch();
+}
+function updateBatchLabel() { const n = visibleEnvs().length; $('btnBatchAll').textContent = S.source ? `Batch: all ${S.source} (${n})` : `Batch: all (${n})`; }
 function buildEnvSelect() {
   const sel = $('env'); sel.innerHTML = '';
   const groups = new Map();
-  for (const e of listEnvs()) { if (!groups.has(e.group)) groups.set(e.group, []); groups.get(e.group).push(e); }
+  for (const e of visibleEnvs()) { if (!groups.has(e.group)) groups.set(e.group, []); groups.get(e.group).push(e); }
   for (const [gname, envs] of groups) {
     const og = document.createElement('optgroup'); og.label = gname;
     for (const e of envs) { const o = document.createElement('option'); o.value = e.id; o.textContent = e.label; og.appendChild(o); }
@@ -75,14 +101,14 @@ function buildEnvSelect() {
 /** Shows where the environments come from; lists problems found in the CSV. */
 function renderEnvSource(errors = []) {
   const s = catalogSource(), n = listEnvs().length;
-  $('envSource').textContent = s.kind === 'csv' ? `Environments: ${s.name} · ${n} loaded${S.envStored ? ' (remembered in this browser only)' : ''}` : `Environments: built-in examples (${n}). Load a CSV for your own dimensions.`;
+  $('envSource').textContent = s.kind === 'csv' ? `${s.name} · ${n} environments${S.envStored ? ' (kept in this browser only)' : ''}` : `Built-in examples (${n}). Load a CSV for your own dimensions.`;
   $('btnEnvReset').hidden = s.kind !== 'csv';
   const box = $('envErrors'); box.hidden = !errors.length; box.innerHTML = errors.map(e => `<div>${esc(e)}</div>`).join('');
 }
 /** Rebuild lists and views after the catalogue changed. */
 function catalogChanged(errors) {
   S.batch = []; S.cur = null; S.stale = false; S.hlCache.clear();
-  buildEnvSelect(); selectEnv(listEnvs()[0].id); renderBatch(); renderEnvSource(errors);
+  S.source = ''; renderSourceChips(); buildEnvSelect(); selectEnv(listEnvs()[0].id); updateBatchLabel(); renderBatch(); renderEnvSource(errors);
 }
 /** Load an environment table (CSV text). persist: remember it in this browser. Returns { envs, errors }. */
 function loadEnvCSV(text, name = 'environments.csv', persist = true) {
@@ -106,8 +132,31 @@ async function restoreEnvs(url) {
   if (loaded && url.get('env')) selectEnv(url.get('env'), url.get('task'));
   if (!loaded) $('startDlg').hidden = false;      // nothing loaded yet: ask for the environment CSV right away
 }
+/** envId -> {status, sub} for the overview tiles, from the batch results. */
+function envStatusMap() {
+  const m = {};
+  for (const e of listEnvs()) {
+    const rs = S.batch.filter(b => b.env.id === e.id && b.result), ok = rs.filter(b => b.result.ok).length, n = e.tasks.length;
+    m[e.id] = !rs.length ? { status: 'none', sub: `${n} task${n > 1 ? 's' : ''}` } : { status: ok === rs.length ? 'ok' : ok === 0 ? 'fail' : 'partial', sub: `${ok} / ${rs.length} passed` };
+  }
+  return m;
+}
+const viewAspect = () => $('view').clientWidth / Math.max(1, $('view').clientHeight);
+/** Show / hide all environments side by side. fit: move the camera to show everything (or back to the default view). */
+function setOverview(on, { fit = true } = {}) {
+  on = !!on; if (on === !!S.overview) return;
+  S.overview = on; $('btnOverview').classList.toggle('on', on);
+  if (on) {
+    const st = envStatusMap();
+    viewer.setOverview(visibleEnvs().map(e => ({ env: e, geo: e.id === S.env.id ? S.geo : buildEnv(e), status: st[e.id].status, sub: st[e.id].sub })), S.env.id);
+    viewer.setSection(null);
+    if (fit) { const v = viewer.overviewView(viewAspect()); viewer.lookFrom(v.pos, v.target); }
+  } else { viewer.clearOverview(); viewer.setSection(sectionSpec()); if (fit) setView('iso'); }
+  showFrame();
+}
 function selectEnv(id, taskId) {
   const env = getEnv(id); if (!env) return;
+  if (S.overview) setOverview(false, { fit: false });
   S.env = env; S.geo = buildEnv(env); $('env').value = id;
   viewer.setEnv(env, S.geo); viewer.setWallOpacity(parseFloat($('wallOpacity').value));
   const ts = $('task'); ts.innerHTML = '';
@@ -202,6 +251,11 @@ function showFrame() {
   } else $('timeLabel').textContent = '0.0 / 0.0 s';
 }
 function hudData(d) {
+  if (S.overview) {
+    const envs = visibleEnvs(), ids = new Set(envs.map(e => e.id)), nt = envs.reduce((a, e) => a + e.tasks.length, 0), done = S.batch.filter(b => b.result && ids.has(b.env.id)), ok = done.filter(b => b.result.ok).length;
+    return { title: `${S.source ? S.source + ' · ' : 'All environments · '}${envs.length} environments, ${nt} tasks`, group: catalogSource().name, params: paramSummary(), phase: '', frac: done.length / Math.max(1, S.batch.length || 1), status: null, reason: '', final: false, bad: false, split: 0, secLabel: '',
+      task: done.length ? `${ok} passed · ${done.length - ok} failed / ${done.length} planned` : 'Click a tile to open that environment' };
+  }
   const c = S.manual ? null : S.cur, res = c && c.result, atEnd = c && S.t >= c.traj.duration - 1e-3;
   return {
     title: S.env.label, group: S.env.group, task: S.task.label, params: paramSummary(), phase: d.phase,
@@ -318,7 +372,7 @@ function upsertBatch(env, task, result) {
   b.result = result; b.params = { ...S.params };
 }
 async function runBatch(all) {
-  const envs = listEnvs().filter(e => all || e.group === S.env.group), jobs = [];
+  const envs = (all ? visibleEnvs() : listEnvs().filter(e => e.group === S.env.group)), jobs = [];
   for (const env of envs) for (const task of env.tasks) jobs.push({ env, task });
   S.batch = jobs.map(j => ({ ...j, result: null })); S.stale = false; renderBatch();
   setBusy(1, `Batch planning 0 / ${jobs.length}`); let done = 0;
@@ -342,6 +396,7 @@ function renderBatch() {
     tb.appendChild(tr);
   }
   $('batchSummary').textContent = S.batch.length ? `${ok} succeeded · ${bad} failed / ${S.batch.length}` : '';
+  if (S.overview) { viewer.updateOverviewStatus(envStatusMap()); showFrame(); }
   const any = S.batch.some(b => b.result); $('btnBatchVideos').disabled = !any; $('btnBatchCSV').disabled = !any;
 }
 
@@ -427,7 +482,7 @@ function init() {
   S.robot = buildRobot(S.params); viewer.setRobot(S.robot); $('warnings').innerHTML = S.robot.warnings.map(w => `<div>${w}</div>`).join('');
   const url = new URLSearchParams(location.search);
   selectEnv(url.get('env') && getEnv(url.get('env')) ? url.get('env') : listEnvs()[0].id, url.get('task'));
-  renderEnvSource();
+  renderEnvSource(); renderSourceChips(); updateBatchLabel();
   $('btnEnvLoad').onclick = () => $('fileEnv').click();
   $('fileEnv').onchange = async e => { const f = e.target.files[0]; if (f) loadEnvCSV(await f.text(), f.name); e.target.value = ''; };
   $('btnEnvTemplate').onclick = () => saveBlob(new Blob(['\ufeff' + EXAMPLE_CSV], { type: 'text/csv' }), 'environments_template.csv');
@@ -453,7 +508,17 @@ function init() {
   $('btnSaveParams').onclick = () => saveBlob(new Blob([JSON.stringify(S.params, null, 2)], { type: 'application/json' }), 'robot_params.json');
   $('btnLoadParams').onclick = () => $('fileParams').click();
   $('fileParams').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { S.params = { ...defaultParams(), ...JSON.parse(await f.text()) }; writeForm(); onParamsChanged(); } catch (err) { alert('Could not read the parameter file: ' + err.message); } e.target.value = ''; };
-  document.querySelectorAll('#viewbtns button').forEach(b => { b.onclick = () => { setView(b.dataset.view); showFrame(); }; });
+  document.querySelectorAll('#viewbtns button[data-view]').forEach(b => { b.onclick = () => { if (S.overview) setOverview(false, { fit: false }); setView(b.dataset.view); showFrame(); }; });
+  $('btnOverview').onclick = () => setOverview(!S.overview);
+  { // overview: a click (not a drag) on a tile opens that environment
+    let down = null;
+    $('gl').addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+    $('gl').addEventListener('pointerup', e => {
+      if (!S.overview || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+      const id = viewer.pickOverview(e.clientX, e.clientY);
+      if (id) { selectEnv(id); renderBatch(); }
+    });
+  }
   $('wallOpacity').oninput = e => { viewer.setWallOpacity(+e.target.value); showFrame(); };
   $('showSupport').onchange = e => { viewer.showSupport = e.target.checked; showFrame(); };
   $('showSection').onchange = () => { viewer.setSection(sectionSpec()); showFrame(); };
@@ -473,7 +538,7 @@ init();
 
 // hooks for scripted use (tools/batch_videos.mjs)
 window.__app = {
-  S, viewer, selectEnv, selectTask, planCurrent, runBatch, encodeVideo, makeCur, showFrame, setView, loadEnvCSV, resetEnvs, listEnvs,
+  S, viewer, selectEnv, selectTask, planCurrent, runBatch, setSource, visibleEnvs, encodeVideo, makeCur, showFrame, setView, loadEnvCSV, resetEnvs, listEnvs, setOverview, envStatusMap, renderBatch, viewAspect,
   setParams(p) { S.params = { ...defaultParams(), ...p }; writeForm(); onParamsChanged(); },
   setTime(t) { S.t = t; S.playing = false; showFrame(); },
   setOpts(o) { for (const [k, id] of [['envMargin', 'optEnvMargin'], ['selfMargin', 'optSelfMargin'], ['stabMargin', 'optStab'], ['nCross', 'optCross']]) if (o[k] != null) $(id).value = o[k]; },

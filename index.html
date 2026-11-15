@@ -38,10 +38,11 @@
       <label>Task <select id="task"></select></label>
       <button id="btnPlan" class="primary">Plan</button>
       <button id="btnBatchGroup" title="Plan every task in the current environment group">Batch: group</button>
-      <button id="btnBatchAll" title="Plan every task in every environment">Batch: all</button>
+      <button id="btnBatchAll" title="Plan every task of every environment in the current source selection">Batch: all</button>
       <span id="busy"></span>
     </div>
     <div id="envbar">
+      <span id="sourceChips" hidden></span>
       <span id="envSource"></span>
       <button id="btnEnvLoad" title="Load the environment table from a CSV file. The file is read inside this browser; nothing is uploaded.">Load environment CSV</button>
       <button id="btnEnvTemplate" title="Download the example table as a starting point for your own CSV">CSV template</button>
@@ -56,6 +57,7 @@
     </div>
     <div id="viewbtns">
       <button data-view="iso">Default</button><button data-view="side">Side</button><button data-view="front">Front</button><button data-view="top">Top</button>
+      <button id="btnOverview" title="Show every environment side by side; after a batch the tiles show pass / fail. Click a tile to open that environment.">All environments</button>
       <label title="Wall opacity">Wall <input type="range" id="wallOpacity" min="0.15" max="1" step="0.05" value="0.45"></label>
       <label><input type="checkbox" id="showSupport" checked> Support polygon &amp; CoM</label>
       <label><input type="checkbox" id="showSection" checked> Section view</label>
