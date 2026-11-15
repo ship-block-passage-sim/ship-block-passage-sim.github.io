@@ -33,7 +33,7 @@ function buildParamForm() {
     for (const [key, def, label, , unit] of rows) {
       const d = document.createElement('div'); d.className = 'p';
       let input;
-      if (key === 'hipMount') input = `<select name="${key}"><option value="end">short edge (end)</option><option value="side">long edge (side)</option></select>`;
+      if (key === 'hipMount') input = `<select name="${key}"><option value="end">along length (end)</option><option value="side">across (side)</option></select>`;
       else if (key === 'liftFold') input = `<select name="${key}"><option value="1">foldable</option><option value="0">fixed vertical</option></select>`;
       else input = `<input type="number" name="${key}" step="${Number.isInteger(def) ? 1 : 0.1}" min="0">`;
       d.innerHTML = `<label for="p_${key}">${label}${unit ? ` <span class="u">[${unit}]</span>` : ''}</label>${input}`;
@@ -87,7 +87,8 @@ function catalogChanged(errors) {
 /** Load an environment table (CSV text). persist: remember it in this browser. Returns { envs, errors }. */
 function loadEnvCSV(text, name = 'environments.csv', persist = true) {
   const r = loadCatalogCSV(text, name);
-  if (!r.envs.length) { renderEnvSource([`${name}: no usable environment found.`, ...r.errors]); return r; }
+  if (!r.envs.length) { const errs = [`${name}: no usable environment found.`, ...r.errors]; renderEnvSource(errs); const box = $('startErrors'); box.hidden = false; box.innerHTML = errs.map(e => `<div>${esc(e)}</div>`).join(''); return r; }
+  $('startDlg').hidden = true; $('startErrors').hidden = true;
   if (persist) { try { localStorage.setItem(LS_ENV, JSON.stringify({ name, text })); S.envStored = true; } catch { /* storage unavailable */ } }
   catalogChanged(r.errors); return r;
 }
@@ -103,6 +104,7 @@ async function restoreEnvs(url) {
     if (src) { try { const res = await fetch(src, { cache: 'no-store' }); if (res.ok) loaded = loadEnvCSV(await res.text(), src.split('/').pop(), false).envs.length > 0; } catch { /* not available */ } }
   }
   if (loaded && url.get('env')) selectEnv(url.get('env'), url.get('task'));
+  if (!loaded) $('startDlg').hidden = false;      // nothing loaded yet: ask for the environment CSV right away
 }
 function selectEnv(id, taskId) {
   const env = getEnv(id); if (!env) return;
@@ -430,6 +432,15 @@ function init() {
   $('fileEnv').onchange = async e => { const f = e.target.files[0]; if (f) loadEnvCSV(await f.text(), f.name); e.target.value = ''; };
   $('btnEnvTemplate').onclick = () => saveBlob(new Blob(['\ufeff' + EXAMPLE_CSV], { type: 'text/csv' }), 'environments_template.csv');
   $('btnEnvReset').onclick = resetEnvs;
+  $('btnStartLoad').onclick = () => $('fileEnv').click();
+  $('btnStartExamples').onclick = () => { $('startDlg').hidden = true; };
+  // drag & drop of the CSV anywhere on the page
+  let dragDepth = 0;
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  window.addEventListener('dragenter', e => { if (hasFiles(e)) { dragDepth++; document.body.classList.add('dragging'); } });
+  window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+  window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', async e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging'); const f = e.dataTransfer.files[0]; if (f) loadEnvCSV(await f.text(), f.name); });
   $('env').onchange = e => { selectEnv(e.target.value); renderBatch(); };
   $('task').onchange = e => { selectTask(e.target.value); renderBatch(); };
   $('btnPlan').onclick = planCurrent; $('btnBatchGroup').onclick = () => runBatch(false); $('btnBatchAll').onclick = () => runBatch(true);

@@ -93,6 +93,16 @@
     </section>
   </aside>
 </div>
+<div id="startDlg" hidden>
+  <div class="card">
+    <h2>Load your environment table</h2>
+    <p>Choose the environment CSV on this computer. Every environment in the file is loaded at once.</p>
+    <button id="btnStartLoad" class="primary">Load environment CSV…</button>
+    <p class="hint">You can also drop the file anywhere on this page. It is read inside this browser and is not uploaded.</p>
+    <div id="startErrors" hidden></div>
+    <button id="btnStartExamples" class="linkbtn">Continue with the built-in examples</button>
+  </div>
+</div>
 <script type="module" src="src/app.js"></script>
 </body>
 </html>

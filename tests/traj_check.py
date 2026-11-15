@@ -54,8 +54,18 @@ for k, f in enumerate(frames):
             if leg(b1) and leg(b1) == leg(b2) and {b1[3:], b2[3:]} == {"shank", "wheel"}: continue   # permanent neighbours (same exemption as the planner)
             if dist < min_self[0]: min_self = (dist, (k, gname[g1], gname[g2]))
             if dist < D["selfMargin"] - 0.5: viol.append((k, gname[g1], gname[g2], round(dist, 2)))
+# hardware rule: leg joints (yaw1, pitch1, pitch2, yaw2) may only change while the lift supports the body (flag bit 4)
+moved_without_lift = 0
+for k in range(1, len(frames)):
+    a, b = frames[k - 1], frames[k]
+    if int(b[4 + NQ + 2]) & 32: continue
+    moved = any(abs(b[4 + 5 * i + j] - a[4 + 5 * i + j]) > 1e-6 for i in range(4) for j in range(4))
+    if moved and not (int(b[4 + NQ + 2]) & 16):
+        moved_without_lift += 1
+        if moved_without_lift <= 3: viol.append((k, "leg joints moved without lift support", "", 0))
 n = len(frames)
 print(f"{D['env']} [{D['task']}] planner says {'SUCCESS' if D['ok'] else 'FAIL'}; frames checked: {n}")
+print(f"  frames in which a leg joint moved without lift support: {moved_without_lift}")
 fmt = lambda v: f"{v[0]:.2f} mm  {v[1]}" if v[1] else "> 30 mm (no pair came closer)"
 print(f"  min robot-environment distance : {fmt(min_env)}   (required >= {D['envMargin']})")
 print(f"  min robot-robot distance       : {fmt(min_self)}   (required >= {D['selfMargin']})")

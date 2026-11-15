@@ -219,6 +219,25 @@ function makeTasks(e) {
 }
 
 // ------------------------------------------------------------------ geometry
+// The CAD pieces are finite samples of a structure that continues. For planning the environment is treated as unbounded:
+//   - longis are infinitely long (BIG), and the longi pattern continues beyond the outermost longis at the outermost pitch
+//     (never inside the modelled floor);
+//   - walls continue sideways and upward without further openings;
+//   - the floor is an unbounded plane.
+// The continuation is drawn faded ("ghost") for GHOST mm beyond the modelled part.
+const BIG = 20000, GHOST = 3000, N_CONT = 3;
+
+/** Longis considered by the planner, sorted by x: the modelled ones plus N_CONT continued copies on either side ({virtual: true}). */
+export function planningLongis(e) {
+  const m = e.longis.slice().sort((a, b) => a.c - b.c), out = m.map(l => ({ c: l.c, prof: l.prof, name: l.name, virtual: false }));
+  if (m.length >= 2) {
+    const f = m[0], l = m[m.length - 1], pf = m[1].c - f.c, pl = l.c - m[m.length - 2].c;
+    const x0 = Math.min(f.c - pf, e.floor.x0), x1 = Math.max(l.c + pl, e.floor.x1);
+    for (let k = 0; k < N_CONT; k++) { out.push({ c: x0 - k * pf, prof: f.prof, name: 'longi (continued)', virtual: true }); out.push({ c: x1 + k * pl, prof: l.prof, name: 'longi (continued)', virtual: true }); }
+  }
+  return out.sort((a, b) => a.c - b.c);
+}
+
 /** Rectangle decomposition of a wall (x-z plane) minus rectangular cut-outs -> [[xa, xb, za, zb]]. */
 function wallRects(w) {
   const cuts = [];
@@ -272,18 +291,23 @@ export function buildEnv(e) {
   const ground = mkBox(-1e5, 1e5, -1e5, 1e5, -400, 0, 'floor', 'floor'); ground.isFloor = true; shapes.push(ground);
   visuals.push({ type: 'box', min: [F.x0, F.y0, -FLOOR_T], max: [F.x1, F.y1, 0], color: COL.floor, name: F.name });
   parts.push({ name: F.name, bbox: [F.x0, F.y0, -FLOOR_T, F.x1, F.y1, 0], volume: (F.x1 - F.x0) * (F.y1 - F.y0) * FLOOR_T });
-  for (const l of e.longis) {
-    const p = l.prof, boxes = [];
-    if (p.kind === 'FB') boxes.push([l.c - p.tw / 2, l.c + p.tw / 2, 0, p.h]);
-    else { const [a, b] = xExtent(p, l.c); boxes.push([l.c - p.tw / 2, l.c + p.tw / 2, 0, p.h - p.tf], [a, b, p.h - p.tf, p.h]); }
-    let vol = 0; const bb = [Infinity, l.y0, 0, -Infinity, l.y1, p.h];
-    for (const [xa, xb, za, zb] of boxes) {
-      shapes.push(mkBox(xa, xb, l.y0, l.y1, za, zb, l.name, 'longi'));
+  const profBoxes = (p, c) => p.kind === 'FB' ? [[c - p.tw / 2, c + p.tw / 2, 0, p.h]] : [[c - p.tw / 2, c + p.tw / 2, 0, p.h - p.tf], [...xExtent(p, c), p.h - p.tf, p.h]];
+  for (const l of e.longis) {      // parts list: the modelled (finite) longis, as in the CAD
+    const p = l.prof; let vol = 0; const bb = [Infinity, l.y0, 0, -Infinity, l.y1, p.h];
+    for (const [xa, xb, za, zb] of profBoxes(p, l.c)) {
       visuals.push({ type: 'box', kind: 'longi', c: l.c, min: [xa, l.y0, za], max: [xb, l.y1, zb], color: COL.longi, name: l.name });
       vol += (xb - xa) * (l.y1 - l.y0) * (zb - za); bb[0] = Math.min(bb[0], xa); bb[3] = Math.max(bb[3], xb);
     }
     parts.push({ name: l.name, bbox: bb, volume: vol });
   }
+  for (const l of planningLongis(e)) {      // collision: infinitely long, pattern continued sideways
+    for (const [xa, xb, za, zb] of profBoxes(l.prof, l.c)) {
+      shapes.push(mkBox(xa, xb, -BIG, BIG, za, zb, l.name, 'longi'));
+      const ghost = (y0, y1) => visuals.push({ type: 'box', kind: 'longi', ghost: true, c: l.c, min: [xa, y0, za], max: [xb, y1, zb], color: COL.longi, name: l.name });
+      if (l.virtual) ghost(F.y0 - GHOST, F.y1 + GHOST); else { ghost(F.y0 - GHOST, F.y0); ghost(F.y1, F.y1 + GHOST); }
+    }
+  }
+  const panels = e.walls.slice().sort((a, b) => a.x0 - b.x0);
   for (const w of e.walls) {
     let vol = 0;
     for (const [xa, xb, za, zb] of wallRects(w)) { shapes.push(mkBox(xa, xb, w.y0, w.y0 + w.t, za, zb, w.name, 'web')); vol += (xb - xa) * (zb - za) * w.t; }
@@ -296,6 +320,14 @@ export function buildEnv(e) {
     visuals.push({ type: 'wall', x0: w.x0, x1: w.x1, y0: w.y0, t: w.t, height: w.height, holes: w.holes, color: COL.web, name: w.name,
       slots: w.slots.map(sl => { const [a, b] = xExtent(sl.prof, sl.c); return [a - SLOT_CL, b + SLOT_CL, sl.prof.h + SLOT_CL]; }) });
     parts.push({ name: w.name, bbox: [w.x0, w.y0, 0, w.x1, w.y0 + w.t, w.height], volume: vol });
+  }
+  if (panels.length) {      // the wall plane continues: solid beside / between the modelled panels and above them
+    const w0 = panels[0], gaps = [[-BIG, w0.x0], ...panels.slice(1).map((w, k) => [panels[k].x1, w.x0]), [panels[panels.length - 1].x1, BIG]];
+    for (const [xa, xb] of gaps) if (xb - xa > 1e-6) {
+      shapes.push(mkBox(xa, xb, w0.y0, w0.y0 + w0.t, 0, w0.height, 'wall (continued)', 'web'));
+      visuals.push({ type: 'box', kind: 'web', ghost: true, min: [Math.max(xa, F.x0 - GHOST), w0.y0, 0], max: [Math.min(xb, F.x1 + GHOST), w0.y0 + w0.t, w0.height], color: COL.web, name: 'wall (continued)' });
+    }
+    shapes.push(mkBox(-BIG, BIG, w0.y0, w0.y0 + w0.t, w0.height, BIG, 'wall (continued)', 'web'));
   }
   for (const b of e.beads) visuals.push({ type: 'bead', x0: b.x0, x1: b.x1, y: b.y, w: 20, h: 10, color: COL.bead, name: b.name });
   return { shapes, visuals, parts };

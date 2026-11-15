@@ -3,7 +3,7 @@
 // with a search over the gait parameters. Units mm / rad.
 import { hit } from './collide.js';
 import { cloneState, lerpState, wrapPi, NQ, Q_FOLD_F, Q_FOLD_R, Q_SLIDE, LEG_LABELS } from './robot.js';
-import { xExtent } from './env.js';
+import { xExtent, planningLongis } from './env.js';
 
 const DEG = Math.PI / 180;
 export const PLAN_DEFAULTS = {
@@ -179,7 +179,7 @@ class Sim {
    */
   _interp(T, quick) {
     const r = this.r, a = cloneState(this.st), target = T.target, scope = T.scope, sup = T.during;
-    const full = this._steps(a, target), n = quick ? (T.type === 'shift' ? Math.max(1, Math.ceil(full / 3)) : 1) : full, prev = cloneState(a);
+    const full = this._steps(a, target), n = quick ? (T.type === 'shift' || T.type === 'drive' ? Math.max(1, Math.ceil(full / 3)) : 1) : full, prev = cloneState(a);
     for (let k = 1; k <= n; k++) {
       const s = lerpState(a, target, k / n);
       if (T.feet) for (const i in T.feet) {
@@ -264,14 +264,36 @@ class Sim {
     this.st = prev; r.fk(this.st);
     return null;
   }
+  /**
+   * Hardware rules checked before a transition starts:
+   *  - leg joints (yaw / pitch) may only move while the lift carries the body; without it the legs are rigid and the robot can only roll;
+   *  - when rolling, every wheel must stand upright with its axle across the driving direction.
+   */
+  _rules(T) {
+    const r = this.r, a = this.st, b = T.target;
+    let legsMove = false;
+    for (let i = 0; i < 4 && !legsMove; i++) for (let k = 0; k < 4; k++) if (Math.abs(b.q[5 * i + k] - a.q[5 * i + k]) > 1e-9) { legsMove = true; break; }
+    if (legsMove && !(T.during && T.during.lift)) return { reason: 'nolift', msg: 'Leg joints can only move while the lift supports the body' };
+    if (T.type === 'drive') {
+      const dx = b.base[0] - a.base[0], dy = b.base[1] - a.base[1], L = Math.hypot(dx, dy);
+      if (L > 1e-6) {
+        r.fk(a);
+        for (let i = 0; i < 4; i++) {
+          const R = r.links[r.legLinks[i].wheel].wR;       // wheel axle = local y axis
+          if (Math.abs(R[7]) > 0.035 || Math.abs((R[1] * dx + R[4] * dy) / L) > 0.035) return { reason: 'wheel', msg: `${LEG_LABELS[i]} wheel cannot roll in the driving direction (axle not across the direction of travel, or wheel tilted)` };
+        }
+      }
+    }
+    return null;
+  }
   /** Run transitions in order. Returns null or {index, label, ...failure}. */
   run(trans, quick = false, onStep = null) {
     for (let k = 0; k < trans.length; k++) {
       const T = trans[k];
       if (!quick) { this.phases.push({ label: T.label, t0: this.t, t1: this.t, type: T.type }); if (onStep) onStep(k, T); }
       if (Date.now() > this.deadline) return { index: k, label: T.label, reason: 'timeout', msg: 'Time limit exceeded' };
-      let f;
-      if (T.type === 'swing') f = this._swing(T, quick); else f = this._interp(T, quick);
+      let f = this._rules(T);
+      if (!f) f = T.type === 'swing' ? this._swing(T, quick) : this._interp(T, quick);
       if (!f && T.after) { this.r.fk(this.st); const s = this.stable(T.after); if (s) f = { reason: 'stability', margin: s.margin }; }
       if (f) return { index: k, label: T.label, ttype: T.type, ...f };
       this.sup = T.after || T.during;
@@ -291,6 +313,8 @@ function describe(f) {
     case 'limit': return 'Joint limit exceeded';
     case 'stability': return `Not statically stable (centre of mass vs. support polygon: ${f.margin === -Infinity ? 'no support polygon' : 'margin ' + f.margin.toFixed(0) + ' mm'})`;
     case 'reach': return 'Leg out of reach';
+    case 'nolift': return 'Leg joints can only move while the lift supports the body';
+    case 'wheel': return 'A wheel cannot roll in the driving direction';
     default: return String(f.reason);
   }
 }
@@ -418,9 +442,14 @@ function planHole(ctx) {
     sim.start(s0, SUP4());
     return { ok: false, info, failure: { label: 'Standing at the passage height', reason: 'reach', msg } };
   }
-  const pick = arr => { const n = arr.length; return n ? [...new Set([arr[0], arr[Math.floor(n / 3)], arr[Math.floor(2 * n / 3)], arr[n - 1]])] : []; };
-  const zCands = [...pick(zLeg.filter(z => G.liftUsable(z))), ...pick(zLeg.filter(z => !G.liftUsable(z)))].slice(0, 6);
-  if (!zLeg.some(z => G.liftUsable(z))) log(`Note: the lift cannot reach the floor at the passage height (pivot height ${(zLeg[0] + robot.zPiv).toFixed(0)}–${(zLeg[zLeg.length - 1] + robot.zPiv).toFixed(0)} mm, lift leg length ${P.liftLen}–${P.liftLen + P.liftStroke} mm) → trying without the lift (three-wheel support)`);
+  // legs can only be repositioned while the lift carries the body: keep the heights at which the lift reaches the floor
+  const zLift = zLeg.filter(z => G.liftUsable(z));
+  if (!zLift.length) {
+    sim.start(neutral(zLeg[0], yN - span - 200), SUP4());
+    return { ok: false, info, failure: { label: 'Lift support at the passage height', reason: 'nolift', msg: `The lift cannot support the body at the passage height (pivot height ${(zLeg[0] + robot.zPiv).toFixed(0)}–${(zLeg[zLeg.length - 1] + robot.zPiv).toFixed(0)} mm, lift leg length ${P.liftLen}–${P.liftLen + P.liftStroke} mm), so the legs cannot be moved through the hole` } };
+  }
+  const pick = arr => { const n = arr.length; return [...new Set([arr[0], arr[Math.floor(n / 4)], arr[Math.floor(n / 2)], arr[Math.floor(3 * n / 4)], arr[n - 1]])]; };
+  const zCands = pick(zLift);
 
   const trk = new Tracker(sim); let attempts = 0;
   const quickRun = (start, trans, startCheck) => {
@@ -429,7 +458,7 @@ function planHole(ctx) {
     return sim.run(trans, true);
   };
   for (const z of zCands) {
-    const lift = G.liftUsable(z), v = robot.verticalShank(G.hipH(z) - rw), w = G.hipH(z) - rw;
+    const lift = true, v = robot.verticalShank(G.hipH(z) - rw), w = G.hipH(z) - rw;
     const rhoMax = robot.a0 + Math.sqrt(Math.max(0, (P.L1 + robot.Ls) ** 2 * 0.97 - w * w));
     const rhos = [...new Set([v.rho, v.rho + 80, v.rho + 160, v.rho - 80].filter(x => x <= rhoMax && x > robot.a0 + 60).map(x => Math.round(x)))];
     for (const rho of rhos) {
@@ -498,11 +527,18 @@ function planHole(ctx) {
   return { ok: false, info, failure: f || { label: 'Search', reason: 'none', msg: 'No feasible pose candidate found' } };
 }
 
-// ------------------------------------------------------------------ task: longi crossing (sideways crawl, body parallel to the longis)
+// ------------------------------------------------------------------ task: longi crossing (sideways, body parallel to the longis)
+// The legs are rigid unless the lift carries the body, so the body advances by ROLLING on the wheels (legs frozen,
+// leg planes across the longis so that the wheels roll sideways) and the legs are re-placed only at lift stops:
+//   stop A (lift down): leading legs step forward over their longi, trailing legs are pulled up over theirs
+//   roll r1 (lift stowed)
+//   stop B (lift down): leading legs step back, trailing legs reach back again -> same stance as at the start
+//   roll r2 = pitch - r1
 function planLongi(ctx) {
   const { robot, env, task, sim, o, log } = ctx, P = robot.P, G = new Gait(robot, o);
-  const longis = env.longis.slice().sort((a, b) => a.c - b.c);
-  const li = longis.indexOf(env.longis[task.longi]);
+  // longis as the planner sees them: infinitely long, with the pattern continued beyond the outermost ones
+  const longis = planningLongis(env);
+  const li = longis.findIndex(l => !l.virtual && l.c === env.longis[task.longi].c);
   const yaw = Math.PI / 2, yc = task.y, rw = robot.rw;
   const nCross = Math.max(1, Math.min(o.nCross | 0, longis.length - li));
   const typ = longis.length > 1 ? (longis[longis.length - 1].c - longis[0].c) / (longis.length - 1) : 800;
@@ -511,7 +547,8 @@ function planLongi(ctx) {
     const R = k < longis.length ? xExtent(longis[k].prof, longis[k].c)[0] : xExtent(longis[longis.length - 1].prof, longis[longis.length - 1].c)[1] + typ;
     return (L + R) / 2;
   };
-  const X0 = gapC(li), X1 = gapC(li + nCross), Dx = X1 - X0;
+  const stops = Array.from({ length: nCross + 1 }, (_, c) => gapC(li + c));      // body position before / after each crossing
+  const X0 = stops[0], X1 = stops[nCross];
   const hMax = Math.max(...longis.slice(li, li + nCross).map(l => l.prof.h));
   const info = { from: X0, to: X1 };
   const hipF = robot.hips[0][0], hipR = robot.hips[2][0], hipLat = Math.abs(robot.hips[0][1]);
@@ -529,114 +566,131 @@ function planLongi(ctx) {
   if (zClear == null) { sim.start(neutral(hMax + 400), SUP4()); return { ok: false, info, failure: { label: 'Body height', reason: 'env', msg: 'No body height found that clears the longi' } }; }
   const zLiftMin = Math.ceil((P.liftLen + 3 - robot.zPiv) / 5) * 5;   // lowest plate height at which the lift legs can swing down
   const zL = Math.max(zClear, zLiftMin);
-  const zCands = [...new Set([zL, zL + 60, zL + 130, zL + 220, zL + 320, zClear, zClear + 60])];
   log(`Lowest plate-centre height that clears the longi (h ${hMax}): ${zClear} mm / lowest height at which the lift can deploy: ${zLiftMin} mm`);
+  const zCands = [zL, zL + 60, zL + 130, zL + 220, zL + 320].filter(z => G.liftUsable(z) && G.hipH(z) - rw <= P.L1 + robot.Ls);
+  if (!zCands.length) {
+    sim.start(neutral(zL), SUP4());
+    const w = G.hipH(zL) - rw;
+    return { ok: false, info, failure: w > P.L1 + robot.Ls
+      ? { label: 'Standing at the passage height', reason: 'reach', msg: `Legs too short: wheels cannot reach the floor from the required hip height ${G.hipH(zL).toFixed(0)} mm (L1+L2+L3 = ${P.L1 + robot.Ls} mm)` }
+      : { label: 'Lift support', reason: 'nolift', msg: `The lift cannot support the body at a height that clears the longi (needed pivot height ${(zL + robot.zPiv).toFixed(0)} mm, lift leg length ${P.liftLen}–${P.liftLen + P.liftStroke} mm), so the legs cannot be moved` } };
+  }
 
-  // forbidden x-zones for wheels (coarse pre-filter; the collision check is exact)
-  const zones = longis.map(l => { const [a, b] = xExtent(l.prof, l.c); return [a - P.linkD / 2 - 2, b + P.linkD / 2 + 2]; });
-  const free = x => zones.every(([a, b]) => x < a || x > b);
-
-  // body yaw 90 deg: body-right legs (1,3) lead toward +X. Feet: lead at X+a, trail at X-b; front feet at yc+hipF+fy, rear at yc+hipR-fy.
-  const build = (z, M, a, b, fy, lift, dl) => {
-    const s = Dx / M, fyF = yc + hipF + fy, fyR = yc + hipR - fy, Xs = X0 + dl;
-    const footY = [fyF, fyF, fyR, fyR], foot = [Xs - b, Xs + a, Xs - b, Xs + a];
-    const S = robot.newState(); G.liftStowed(S); S.base.set([Xs, yc, z, yaw]);
-    const place = (stt, i) => { const sol = robot.ik(i, stt.base, [foot[i], footY[i], rw], 1); if (!sol) return false; stt.q[5 * i] = sol[0]; stt.q[5 * i + 1] = sol[1]; stt.q[5 * i + 2] = sol[2]; stt.q[5 * i + 3] = 0; return true; };
-    for (let i = 0; i < 4; i++) if (!place(S, i)) return null;
-    const tr = []; let cur = cloneState(S), down = false;
-    // the lift is used at every body stop where its legs fit between / astride the longis; elsewhere the swing relies on 3 wheels
-    const fits = () => { const t = cloneState(cur); t.q[Q_FOLD_F] = t.q[Q_FOLD_R] = 0; t.q[Q_SLIDE] = G.dTouch(z); robot.fk(t); return !sim.chk.envHit(robot.liftShapeIdx); };
-    let used = 0, stops = 0;
-    const deploy = () => { stops++; if (lift && !down && fits()) { const d = G.liftDeploy(cur, z, ''); tr.push(...d.trans); cur = d.state; down = true; used++; } };
-    const stow = () => { if (down) { const d = G.liftStow(cur, ''); tr.push(...d.trans); cur = d.state; down = false; } };
-    const step = (i, what) => { foot[i] += s; const sw = G.swing(cur, i, place, `${LEG_LABELS[i]} leg: ${what}`, down); if (!sw) return false; tr.push(...sw.trans); cur = sw.state; return true; };
-    for (let j = 0; j <= M; j++) {
-      deploy();
-      if (j > 0) for (const i of [0, 2]) if (!step(i, 'trailing leg follows')) return null;
-      if (j < M) {
-        for (const i of [1, 3]) if (!step(i, 'step in the travel direction')) return null;
-        stow();
-        const T = cloneState(cur); T.base[0] += s;
-        const feet = {};
-        for (let i = 0; i < 4; i++) { feet[i] = [foot[i], footY[i], rw]; const sol = robot.ik(i, T.base, feet[i], 1); if (!sol) return null; T.q[5 * i] = sol[0]; T.q[5 * i + 1] = sol[1]; T.q[5 * i + 2] = sol[2]; }
-        tr.push({ type: 'shift', label: `Shift body sideways ${s.toFixed(0)} mm (feet planted)`, target: T, feet, scope: 'full', during: SUP4() }); cur = T;
-      }
+  // Footholds from which a wheel can roll sideways (along X). Two stance families:
+  //   'lat' : leg plane across the longis (wheel directly beside its hip), any reachable distance, yaw2 = 0
+  //   'vert': shank vertical, leg turned outward (front legs forward, rear legs backward), wheel steered with yaw2
+  const hipX = i => (i % 2 ? 1 : -1) * hipLat, hipY = i => yc + (i < 2 ? hipF : hipR);     // hip position relative to the body centre (world axes)
+  const LEAD = [1, 3], TRAIL = [0, 2];           // body yaw 90 deg: body-right legs are on the +X (leading) side
+  /** Joint values [q1..q4] of leg i for body at (X, z) and wheel at world x = X + off, or null. */
+  const stance = (i, X, z, off, fam) => {
+    const base = [X, yc, z, yaw];
+    let ty = hipY(i);
+    if (fam === 'vert') {
+      const v = robot.verticalShank(G.hipH(z) - rw); if (!v) return null;
+      const dx = off - hipX(i), r2 = v.rho * v.rho - dx * dx; if (r2 < 0) return null;
+      ty += (i < 2 ? 1 : -1) * Math.sqrt(r2);
     }
-    stow();
-    return { start: S, trans: tr, used, stops };
+    const sol = robot.ik(i, base, [X + off, ty, rw], 1); if (!sol) return null;
+    let q4 = 0;
+    if (fam === 'vert') { q4 = wrapPi(robot.yaw0[i] + sol[0] + Math.PI / 2); if (q4 > Math.PI / 2) q4 -= Math.PI; else if (q4 <= -Math.PI / 2) q4 += Math.PI; }   // axle along the longis
+    return [sol[0], sol[1], sol[2], q4];
   };
+  const setLeg = (stt, i, off, fam) => { const q = stance(i, stt.base[0], stt.base[2], off, fam); if (!q) return false; for (let k = 0; k < 4; k++) stt.q[5 * i + k] = q[k]; return true; };
 
-  // single-leg stance test (IK + leg vs. environment) with the body at x = X and the wheel at x = fx; cached
-  const okCache = new Map(), probe = robot.newState(); G.liftStowed(probe);
-  for (let i = 0; i < 4; i++) probe.q[5 * i + 1] = -Math.PI / 2;
-  const legOK = (i, X, fx, fy, z) => {
-    const key = `${i}|${Math.round(X)}|${Math.round(fx)}|${fy}|${z}`;
-    let v = okCache.get(key); if (v !== undefined) return v;
-    probe.base.set([X, yc, z, yaw]);
-    const sol = robot.ik(i, probe.base, [fx, i < 2 ? yc + hipF + fy : yc + hipR - fy, rw], 1);
-    if (!sol || Math.abs(sol[0]) > robot.jointLimits[0] || Math.abs(sol[1]) > robot.jointLimits[1] || Math.abs(sol[2]) > robot.jointLimits[2]) v = false;
-    else { const keep = [probe.q[5 * i], probe.q[5 * i + 1], probe.q[5 * i + 2]]; probe.q[5 * i] = sol[0]; probe.q[5 * i + 1] = sol[1]; probe.q[5 * i + 2] = sol[2]; robot.fk(probe); v = !(sim.chk.envHit(robot.legShapeIdx[i]) || sim.chk.selfHit(sim.chk.legPairs[i])); probe.q[5 * i] = keep[0]; probe.q[5 * i + 1] = keep[1]; probe.q[5 * i + 2] = keep[2]; }
-    okCache.set(key, v); return v;
-  };
-
-  // separate bookkeeping: attempts using the lift are reported in preference to the no-lift fallback
-  const trkLift = new Tracker(sim), trkNo = new Tracker(sim); let attempts = 0, anyLift = false;
+  const trk = new Tracker(sim); let attempts = 0, anyPattern = false; const dbg = { stops: 0, liftOK: 0, lead: 0, trail: 0 };
   outer:
   for (const z of zCands) {
-    const liftOK = G.liftUsable(z), w = G.hipH(z) - rw;
-    if (w > P.L1 + robot.Ls) { trkNo.note({ index: 0, label: 'Standing at the passage height', reason: 'reach', msg: `Legs too short: wheels cannot reach the floor from the required hip height ${G.hipH(z).toFixed(0)} mm (L1+L2+L3 = ${P.L1 + robot.Ls} mm)` }, 0, { start: neutral(z), trans: [] }, false); continue; }
-    const reach = Math.sqrt(Math.max(0, (P.L1 + robot.Ls) ** 2 * 0.98 - w * w));          // max horizontal hip-pitch -> wheel distance
-    const v = robot.verticalShank(w), nominal = hipLat + (v ? v.rho : robot.a0 + reach * 0.6);
-    for (const lift of (liftOK ? [true, false] : [false])) {
-      const trk = lift ? trkLift : trkNo; if (lift) anyLift = true;
-      for (let M = nCross; M <= 4 * nCross; M++) {
-        const s = Dx / M, cands = [];
-        for (const dl of [0, 60, -60, 120, -120]) for (const fy of [150, 0, 300, 450]) {
-          const latMax = hipLat + Math.sqrt(Math.max(0, (robot.a0 + reach) ** 2 - fy * fy)), Xs = X0 + dl;
-          // exact per-leg pre-filter: every (body stop, foot position) pair used by the gait must be reachable and collision-free
-          const okLead = [], okTrail = [];
-          for (let a = 150; a + s <= latMax; a += 25) {
-            let ok = true;
-            for (let j = 0; j <= M && ok; j++) for (const i of [1, 3]) { if (!(ok = legOK(i, Xs + j * s, Xs + a + j * s, fy, z))) break; if (j < M && !(ok = legOK(i, Xs + j * s, Xs + a + (j + 1) * s, fy, z))) break; }
-            if (ok) okLead.push(a);
-          }
-          if (!okLead.length) continue;
-          for (let b = 150; b + s <= latMax; b += 25) {
-            let ok = true;
-            for (let j = 0; j <= M && ok; j++) for (const i of [0, 2]) { if (!(ok = legOK(i, Xs + j * s, Xs - b + j * s, fy, z))) break; if (j > 0 && !(ok = legOK(i, Xs + j * s, Xs - b + (j - 1) * s, fy, z))) break; }
-            if (ok) okTrail.push(b);
-          }
-          for (const a of okLead) for (const b of okTrail) cands.push({ a, b, fy, dl, cost: Math.abs(a - (nominal - s / 2)) + Math.abs(b - (nominal - s / 2)) + Math.abs(fy - 150) * 0.3 + Math.abs(dl) * 0.8 });
+    // single-leg test (limits + leg vs. environment / body) with the body at X and the wheel at X + off; cached
+    const cache = new Map(), probe = robot.newState(); G.liftStowed(probe);
+    for (let i = 0; i < 4; i++) probe.q[5 * i + 1] = -Math.PI / 2;
+    const legOK = (i, X, off, fam) => {
+      const key = ((i * 2 + (fam === 'vert' ? 1 : 0)) * 16384 + Math.round(X + 4000)) * 16384 + Math.round(off + 4000);
+      let v = cache.get(key); if (v !== undefined) return v;
+      const q = stance(i, X, z, off, fam);
+      if (!q || q.some((val, k) => Math.abs(val) > robot.jointLimits[k] + 1e-9)) v = false;
+      else { probe.base.set([X, yc, z, yaw]); const keep = Array.from(probe.q.subarray(5 * i, 5 * i + 4)); probe.q.set(q, 5 * i); robot.fk(probe); v = !(sim.chk.envHit(robot.legShapeIdx[i]) || sim.chk.selfHit(sim.chk.legPairs[i])); probe.q.set(keep, 5 * i); }
+      cache.set(key, v); return v;
+    };
+    const both = (legs, X, off, fam) => legOK(legs[0], X, off, fam) && legOK(legs[1], X, off, fam);
+    const rollOK = (legs, off, fam, Xs, Xe) => { for (let X = Xs; X < Xe - 1e-6; X += 20) if (!both(legs, X, off, fam)) return false; return both(legs, Xe, off, fam); };
+    const liftCache = new Map();
+    const liftFits = X => { const k = Math.round(X); let v = liftCache.get(k); if (v === undefined) { const t = robot.newState(); t.base.set([X, yc, z, yaw]); for (let i = 0; i < 4; i++) t.q[5 * i + 1] = -Math.PI / 2; t.q[Q_SLIDE] = G.dTouch(z); robot.fk(t); v = !sim.chk.envHit(robot.liftShapeIdx); liftCache.set(k, v); } return v; };
+
+    const w = G.hipH(z) - rw, reach = Math.sqrt(Math.max(0, (P.L1 + robot.Ls) ** 2 * 0.98 - w * w));
+    const v0 = robot.verticalShank(w), offMax = { lat: hipLat + robot.a0 + reach, vert: v0 ? hipLat + v0.rho : 0 };
+    const nominal = hipLat + (v0 ? v0.rho * 0.7 : robot.a0 + reach * 0.6);
+    const DELTAS = [0, 140, 180, 220, 260, 300, 350, 400, 460, 520];
+    const build = (dl, fr, lead, trail) => {
+      // lead = {a, d, fam}: distance a (short) <-> a + d (stepped forward); trail = {b, d, fam}: distance b (pulled up) <-> b + d (reaching back)
+      const S = robot.newState(); G.liftStowed(S); S.base.set([X0 + dl, yc, z, yaw]);
+      for (const i of LEAD) if (!setLeg(S, i, lead.a, lead.fam)) return null;
+      for (const i of TRAIL) if (!setLeg(S, i, -(trail.b + trail.d), trail.fam)) return null;
+      const tr = []; let cur = cloneState(S);
+      const relocate = (offLead, offTrail, moveLead, moveTrail) => {
+        if (!moveLead && !moveTrail) return true;
+        const d = G.liftDeploy(cur, z, ''); tr.push(...d.trans); cur = d.state;
+        for (const [legs, off, fam, move, what] of [[LEAD, offLead, lead.fam, moveLead, moveLead > 0 ? 'step forward over the longi' : 'step back'], [TRAIL, -offTrail, trail.fam, moveTrail, moveTrail > 0 ? 'pull up over the longi' : 'reach back']]) {
+          if (!move) continue;
+          for (const i of legs) { const sw = G.swing(cur, i, (stt, k) => setLeg(stt, k, off, fam), `${LEG_LABELS[i]} leg: ${what}`, true); if (!sw) return false; tr.push(...sw.trans); cur = sw.state; }
         }
-        cands.sort((p, q) => p.cost - q.cost);
-        let full = 0, quickN = 0; const seen = new Set(), hist = {};
-        for (const c of cands) {
-          if (Date.now() > sim.deadline || attempts >= o.maxFull) break outer;
-          if (quickN >= 70) break;
-          const key = `${Math.round(c.a / 100)}|${Math.round(c.b / 100)}|${c.fy}|${c.dl}`;
-          if (seen.has(key)) continue;
-          const g = build(z, M, c.a, c.b, c.fy, lift, c.dl); if (!g) continue;
-          quickN++;
-          sim.st = cloneState(g.start); robot.fk(sim.st);
-          let q = sim.problem(sim.st, 'full', SUP4()); q = q ? { index: -1, label: 'Start pose', reason: q.type, ...q } : sim.run(g.trans, true);
-          if (q) { const hk = `${q.label.replace(/^.*leg: /, '')} [${q.reason}${q.a ? ' ' + q.a.replace(/^(fl|fr|rl|rr)_/, '') : ''}]`; hist[hk] = (hist[hk] || 0) + 1; trk.note({ ...q, frac: (q.index + 1) / g.trans.length }, 1, { start: g.start, trans: g.trans }, false); continue; }
-          seen.add(key); attempts++; full++;
-          ctx.progress(`Planning longi crossing… (plate height ${z} mm, ${M} step(s), attempt ${attempts})`);
-          sim.start(g.start, SUP4());
-          const f = sim.run(g.trans);
-          if (!f) { Object.assign(info, { z, steps: M, stepLength: s, leadOffset: c.a, trailOffset: c.b, splay: c.fy, lift: g.used > 0, liftStops: `${g.used}/${g.stops}` }); return { ok: true, info }; }
-          trk.note(f, 2, null, true);
-          if (full >= 2) break;
-        }
-        if (o.debug) log(`[search] z=${z} lift=${lift} M=${M}: candidates ${cands.length}, pose checks ${quickN}, full plans ${full} · rejected at pose check: ${Object.entries(hist).sort((x, y) => y[1] - x[1]).slice(0, 4).map(([k, n]) => `${k}×${n}`).join(', ') || '-'}`);
+        const u = G.liftStow(cur, ''); tr.push(...u.trans); cur = u.state; return true;
+      };
+      const roll = dist => { const T = cloneState(cur); T.base[0] += dist; tr.push({ type: 'drive', label: `Roll sideways ${dist.toFixed(0)} mm (legs rigid)`, target: T, scope: 'drive', during: SUP4() }); cur = T; };
+      for (let c = 0; c < nCross; c++) {
+        const D = stops[c + 1] - stops[c], r1 = Math.round(D * fr / 20) * 20;
+        if (!relocate(lead.a + lead.d, trail.b, lead.d, trail.d)) return null;      // stop A
+        roll(r1);
+        if (!relocate(lead.a, trail.b + trail.d, -lead.d, -trail.d)) return null;   // stop B
+        roll(D - r1);
+      }
+      return { start: S, trans: tr };
+    };
+
+    for (const dl of [0, 60, -60, 120, -120]) for (const fr of [0.5, 0.4, 0.6, 0.3, 0.7]) {
+      if (Date.now() > sim.deadline || attempts >= o.maxFull) break outer;
+      dbg.stops++;
+      // every lift stop must have room for the lift legs
+      let liftOK = true; const stopsAB = [];
+      for (let c = 0; c < nCross; c++) { const D = stops[c + 1] - stops[c], XA = stops[c] + dl, XB = XA + Math.round(D * fr / 20) * 20; stopsAB.push([XA, XB, XA + D]); if (!liftFits(XA) || !liftFits(XB)) liftOK = false; }
+      if (!liftOK) continue;
+      dbg.liftOK++;
+      // stepping patterns per side that keep both legs valid at every stop and all along both rolls
+      const leadOpts = [], trailOpts = [];
+      for (const fam of ['vert', 'lat']) for (let a = 150; a <= offMax[fam]; a += 25) for (const d of DELTAS) {
+        if (a + d > offMax[fam]) break;
+        if (stopsAB.every(([XA, XB, XC]) => both(LEAD, XA, a, fam) && both(LEAD, XA, a + d, fam) && rollOK(LEAD, a + d, fam, XA, XB) && both(LEAD, XB, a, fam) && rollOK(LEAD, a, fam, XB, XC))) leadOpts.push({ a, d, fam, cost: Math.abs(a + d / 2 - nominal) + d * 0.5 });
+      }
+      if (!leadOpts.length) continue;
+      dbg.lead++;
+      for (const fam of ['vert', 'lat']) for (let b = 150; b <= offMax[fam]; b += 25) for (const d of DELTAS) {
+        if (b + d > offMax[fam]) break;
+        if (stopsAB.every(([XA, XB, XC]) => both(TRAIL, XA, -(b + d), fam) && both(TRAIL, XA, -b, fam) && rollOK(TRAIL, -b, fam, XA, XB) && both(TRAIL, XB, -(b + d), fam) && rollOK(TRAIL, -(b + d), fam, XB, XC))) trailOpts.push({ b, d, fam, cost: Math.abs(b + d / 2 - nominal) + d * 0.5 });
+      }
+      if (!trailOpts.length) continue;
+      dbg.trail++; anyPattern = true;
+      leadOpts.sort((p, q) => p.cost - q.cost); trailOpts.sort((p, q) => p.cost - q.cost);
+      const spread = (arr, key) => { const out = []; for (const x of arr) { if (out.every(y => Math.abs(y[key] - x[key]) >= 75 || y.d !== x.d || y.fam !== x.fam)) out.push(x); if (out.length >= 3) break; } return out; };
+      let full = 0;
+      for (const lead of spread(leadOpts, 'a')) for (const trail of spread(trailOpts, 'b')) {
+        if (Date.now() > sim.deadline || attempts >= o.maxFull) break outer;
+        if (full >= 3) break;
+        const g = build(dl, fr, lead, trail); if (!g) continue;
+        sim.st = cloneState(g.start); robot.fk(sim.st);
+        let q = sim.problem(sim.st, 'full', SUP4()); q = q ? { index: -1, label: 'Start pose', reason: q.type, ...q } : sim.run(g.trans, true);
+        if (q) { trk.note(q, 1, { start: g.start, trans: g.trans }, false); continue; }
+        attempts++; full++;
+        ctx.progress(`Planning longi crossing… (plate height ${z} mm, attempt ${attempts})`);
+        sim.start(g.start, SUP4());
+        const f = sim.run(g.trans);
+        if (!f) { Object.assign(info, { z, roll1: Math.round((stops[1] - stops[0]) * fr / 20) * 20, pitch: stops[1] - stops[0], leadOffset: lead.a, leadStep: lead.d, leadStance: lead.fam, trailOffset: trail.b, trailStep: trail.d, trailStance: trail.fam, lift: true }); return { ok: true, info }; }
+        trk.note(f, 2, null, true);
       }
     }
   }
-  const useLift = anyLift && trkLift.best;
-  let f = (useLift ? trkLift : trkNo).finalize();
-  if (f && useLift && trkNo.best) f = { ...f, msg: describe(f) + ' · the fallback without the lift (three-wheel support) also failed' };
+  if (o.debug) log(`[search] stop combinations ${dbg.stops}, lift fits ${dbg.liftOK}, with a leading-leg pattern ${dbg.lead}, with both patterns ${dbg.trail}`);
+  const f = trk.finalize();
   if (!sim.frames.length) sim.start(neutral(zCands[0]), SUP4());
-  return { ok: false, info, failure: f || { label: 'Foothold search', reason: 'reach', msg: 'No foothold candidates (longi spacing/height too large for the leg reach)' } };
+  return { ok: false, info, failure: f || { label: 'Stepping pattern search', reason: 'reach', msg: anyPattern ? 'No stepping pattern passed the full pose check' : (dbg.liftOK === 0 ? 'The lift legs do not fit between / astride the longis at any pair of stops, so the legs cannot be moved' : dbg.lead === 0 ? 'No stepping pattern for the leading legs: their wheels cannot roll inside a channel and step over the longi from the lift stops (leg reach vs. longi height / spacing)' : 'No stepping pattern for the trailing legs: their wheels cannot roll inside a channel and step over the longi from the lift stops (leg reach vs. longi height / spacing)') } };
 }
 
 /** All colliding pairs of a state (for display). */

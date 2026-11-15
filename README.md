@@ -20,8 +20,8 @@ The app is static files only, so deploying later means copying the folder to any
 ## Workflow
 
 1. Enter the dimensions on the left (table below). The 3D model updates immediately.
-2. Load your environment table with **Load environment CSV** (or use the built-in examples), pick an **Environment** and a **Task**
-   (hole passage / longi crossing) at the top → **Plan**.
+2. When the page opens it asks for the environment table: press **Load environment CSV…** and choose the file (or drop it on the page).
+   All environments in the file are loaded at once. Then pick an **Environment** and a **Task** (hole passage / longi crossing) → **Plan**.
 3. Check the motion with the timeline. The right panel shows the result, the failure reason and the phase list (click a phase to jump to it).
 4. **Save video** writes the current result as MP4. **Batch: group / Batch: all** plan many environments at once; **Save all videos** then
    writes `SUCCESS__….mp4` / `FAIL__….mp4` into a folder you choose. **Save CSV** writes the result table.
@@ -35,14 +35,14 @@ The green outline is the support polygon and the green dot the centre of mass. A
 | Group | Fields | Meaning in the model |
 |---|---|---|
 | 1. Centre plate | length, width, thickness | Length = travel direction (X). The hips and the lift attach to it |
-| 2. Actuator | diameter, thickness | All four joint actuators of a leg are the same cylinder. Yaw1 sits outside the short edge of the plate, tangent to it (at the corner); Pitch1 is next to it |
+| 2. Actuator | diameter, thickness | All four joint actuators of a leg are the same cylinder. Yaw1 sits inside each plate corner, tangent to both plate edges from the inside (the plate corner is rounded with the actuator radius); Pitch1 is next to it, just outside the plate |
 | 3. Leg links | L1, L2, L3 | Pitch1–Pitch2, Pitch2–Yaw2, Yaw2–wheel axis |
 | 4. Payload | length, width, height | A box centred on top of the plate (used for collision and centre of mass) |
 | 5. Lift leg spacing | lengthwise (X), crosswise (Y) | Distance between the fold shafts, distance between left and right legs |
 | 6. Lift legs | length, stroke | Pivot-to-sole length when retracted, linear extension |
 
-`Advanced settings` holds the geometry assumptions (wheel diameter/width, link tube diameter, yaw location end/side, lift folding, leg width,
-pivot position), joint limits and masses.
+`Advanced settings` holds the geometry assumptions (wheel diameter/width, link tube diameter, zero direction of Yaw1, lift folding, leg width,
+pivot position), joint limits and masses. The yaw and pitch actuators are centred on the mid-plane of the plate.
 
 ### Modelling assumptions
 
@@ -62,7 +62,8 @@ pivot position), joint limits and masses.
 
 The environments are **not part of the code**. They come from a CSV table with one row per environment:
 
-- Out of the box the app shows six **built-in examples with made-up dimensions**, so that it can be tried immediately.
+- When the page opens, a dialog asks for the CSV. Without one the app shows six **built-in examples with made-up dimensions**,
+  so that it can still be tried.
 - Real dimensions (vessel longi sizes, access-hole sizes, test pieces) are kept in a separate CSV that is **not in this repository**.
   Share that file with the team directly; each person loads it with **Load environment CSV**.
 - The file is read inside the browser and kept in that browser's local storage, so it only has to be loaded once per browser.
@@ -109,24 +110,44 @@ panel-B,My vessel,Mixed panel,T;T;L,250;350;400,10,90;110;120,15,800,3,,,,
 
 Floor weld beads are drawn but are not part of the collision model.
 
+### The environment is treated as unbounded
+
+A CSV row describes a finite sample of a structure that continues, so the planner must not use its edges as a way round:
+
+- **Longis are infinitely long.** The robot cannot go past or around their ends.
+- **The longi pattern continues sideways** beyond the outermost longis, with the outermost longi and pitch, starting no closer than the
+  edge of the modelled floor. Crossing the first or last longi therefore starts and ends in a real channel.
+- **Walls continue sideways and upward** without further openings; the only way through is a hole.
+- The floor is an unbounded plane.
+
+The continuation is drawn faded.
+
 ## How passage is decided
 
 MoveIt2 is not used; the app has its own planner (see "MoveIt2" below). Following the photos, it builds a **fixed sequence of motions (gait)**
 and executes each segment with collision checking. Moving one leg is planned with **RRT-Connect** in that leg's 4-joint space.
-Pose variables (body height, distance to the wall, leg spread angle, step length, foot positions) are searched over candidates.
+Pose variables (body height, distance to the wall, leg spread angle, foot positions, rolling distances) are searched over candidates.
+
+**Hardware rules built into every plan**
+
+- **Leg joints (yaw, pitch) only move while the lift carries the body.** Without lift support the legs are rigid; the robot can then only
+  roll on its wheels. A leg is therefore re-placed only at a lift stop, one leg at a time.
+- When rolling, every wheel must stand upright with its axle across the direction of travel: either the leg plane points along the
+  direction of travel (Yaw2 = 0), or the shank is vertical and the wheel is steered with Yaw2.
 
 **Hole passage** (body lengthwise through the hole, constant body height)
 
-1. Drive up to the wall with the front legs spread into the neighbouring channels (shanks vertical) and the rear legs trailing behind
+1. Roll up to the wall with the front legs spread into the neighbouring channels (shanks vertical, wheels steered) and the rear legs trailing behind
 2. Unfold the lift and stand on it → put the front legs through the hole one at a time and plant them on the far side → stow the lift
-3. Drive on four wheels until the body is through the hole (the rear legs still reach back through the hole to the near-side floor)
-4. On the far side, deploy the lift again → bring the rear legs through one at a time and plant them in the neighbouring channels → stow the lift → drive off
+3. Roll on four wheels until the body is through the hole (the rear legs still reach back through the hole to the near-side floor)
+4. On the far side, deploy the lift again → bring the rear legs through one at a time and plant them in the neighbouring channels → stow the lift → roll off
 
 **Longi crossing** (body parallel to the longis, moving sideways)
 
-1. Stand on the lift (only where its legs fit inside a channel or astride a longi) and move the two leading legs one step each
-2. Stow the lift → shift the body sideways with the feet planted
-3. Stand on the lift again and bring the two trailing legs after. Repeated with 1–4 steps per pitch
+1. Lift stop A: the leading legs step forward over their longi, the trailing legs are pulled up over theirs
+2. Stow the lift → roll sideways with rigid legs (every wheel stays inside its channel)
+3. Lift stop B: the leading legs step back, the trailing legs reach back again, which restores the starting stance
+4. Stow the lift → roll the rest of the pitch. The lift is only used where its legs fit inside a channel or astride a longi.
 
 **Success criteria**: at every instant robot–environment distance ≥ 10 mm, distance between robot parts ≥ 5 mm, joints within limits, and the
 centre of mass at least 20 mm inside the support polygon (planted wheels + lift feet on the floor). The values are in `Options` on the right.
@@ -176,7 +197,8 @@ node tests/run_all.mjs      # needs python3 with mujoco, numpy, scipy
 
 - Collision test (GJK) compared with MuJoCo distances on random shape pairs
 - Exported URDF loaded in MuJoCo: link poses, centre of mass and mass compared with the JS model
-- Whole planned trajectories replayed in MuJoCo with robot + environment: minimum distances must stay above the clearances
+- Whole planned trajectories replayed in MuJoCo with robot + environment: minimum distances must stay above the clearances, and no leg
+  joint may move in a frame without lift support
 - Environment CSV reader: quoting, lists, defaults and error reporting
 - (optional) an environment table against the STEP files it was taken from: create the JSON with `tests/step_parts.py`, then
   `STEP_PARTS=<json> ENVS_CSV=<environments.csv> node tests/run_all.mjs`

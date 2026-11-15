@@ -49,9 +49,9 @@ export class Viewer {
       let mesh;
       if (v.type === 'box') {
         const g = new THREE.BoxGeometry(v.max[0] - v.min[0], v.max[1] - v.min[1], v.max[2] - v.min[2]);
-        mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: v.color, roughness: 0.75, metalness: 0.15 }));
+        mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial(v.ghost ? { color: v.color, roughness: 0.9, transparent: true, opacity: 0.22, depthWrite: false } : { color: v.color, roughness: 0.75, metalness: 0.15 }));
         mesh.position.set((v.min[0] + v.max[0]) / 2, (v.min[1] + v.max[1]) / 2, (v.min[2] + v.max[2]) / 2);
-        mesh.castShadow = v.max[2] > 1; mesh.receiveShadow = true;
+        mesh.castShadow = !v.ghost && v.max[2] > 1; mesh.receiveShadow = !v.ghost; if (v.ghost) { mesh.renderOrder = 4; mesh.userData.ghost = true; }
       } else if (v.type === 'wall') {
         const sh = new THREE.Shape(); sh.moveTo(v.x0, 0);
         const slots = v.slots.map(([a, b, top]) => [Math.max(a, v.x0 + 0.01), Math.min(b, v.x1 - 0.01), top]).filter(s => s[1] > s[0]).sort((p, q) => p[0] - q[0]);
@@ -75,7 +75,7 @@ export class Viewer {
         mesh.scale.set(1, v.w / 2, v.h); mesh.position.set((v.x0 + v.x1) / 2, v.y, 0);
       }
       mesh.userData.baseColor = v.color; mesh.userData.kind = v.kind || v.type; mesh.userData.cx = v.c; reg(v.name, mesh); this.envGroup.add(mesh);
-      if (v.type !== 'bead') mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30), edgeMat));
+      if (v.type !== 'bead' && !v.ghost) mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30), edgeMat));
     }
     // surrounding ground + grid
     const F = env.floor, cx = (F.x0 + F.x1) / 2, cy = (F.y0 + F.y1) / 2, ext = Math.max(F.x1 - F.x0, F.y1 - F.y0) + 6000;
@@ -96,7 +96,7 @@ export class Viewer {
     const hole = spec && spec.type === 'hole';
     for (const m of this.envGroup.children) {
       if (!m.isMesh) continue;
-      const mainOnly = hole && (m.userData.wall || (m.userData.kind === 'longi' && m.userData.cx > spec.xc + 1));
+      const mainOnly = hole && (m.userData.wall || (m.userData.kind === 'web' && m.userData.ghost) || (m.userData.kind === 'longi' && m.userData.cx > spec.xc + 1));
       m.traverse(o => o.layers.set(mainOnly ? 1 : 0));
     }
     if (hole) { // wall cross-section at the hole centre plane (solid below the sill and above the opening), section view only
@@ -145,7 +145,7 @@ export class Viewer {
       if (s.kind === 'wheel') { // hub stripe so that wheel rotation is visible
         const hub = new THREE.Mesh(new THREE.BoxGeometry(s.r * 1.5, s.r * 0.28, 2 * s.h + 4), new THREE.MeshStandardMaterial({ color: 0x3f8cff, roughness: 0.5 })); m.add(hub);
       }
-      if (pay || s.kind === 'plate') m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: pay ? 0xa01525 : 0x4b5563 })));
+      if (pay) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0xa01525 })));
       this.robotGroup.add(m); this.meshes.push(m);
     }
     this.dirty = true;
