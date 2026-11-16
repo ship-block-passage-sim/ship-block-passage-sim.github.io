@@ -40,15 +40,27 @@ After a batch the tiles are coloured green (all tasks passed), amber (some) or r
 | Group | Fields | Meaning in the model |
 |---|---|---|
 | 1. Centre plate | length, width, thickness | Length = travel direction (X). The hips and the lift attach to it |
-| 2. Actuator | diameter, thickness | All four joint actuators of a leg are the same cylinder. Yaw1 stands on top of the plate inside each corner, tangent to both plate edges from the inside; Pitch1 is next to it, just outside the plate |
+| 2. Actuator | diameter, thickness, hip joint layout | All four joint actuators of a leg are the same cylinder. Yaw1 stands on top of the plate inside each corner, tangent to both plate edges from the inside. Where Pitch1 sits depends on the hip joint layout (below) |
 | 3. Leg links | L1, L2, L3 | Pitch1–Pitch2, Pitch2–Yaw2, Yaw2–wheel axis |
 | 4. Payload | length, width, height | A box centred on top of the plate (used for collision and centre of mass) |
 | 5. Lift leg spacing | lengthwise (X), crosswise (Y) | Distance between the fold shafts, distance between left and right legs |
 | 6. Lift legs | length, stroke | Pivot-to-sole length when retracted, linear extension |
 
-`Advanced settings` holds the geometry assumptions (wheel diameter/width, link tube diameter, zero direction of Yaw1, lift folding, leg width,
-pivot position), joint limits and masses. The pitch axis is at the mid-height of the yaw actuator, i.e. half an actuator thickness
-above the top of the plate.
+`Advanced settings` holds the geometry assumptions (wheel diameter/width, link tube diameter, zero direction of Yaw1, Yaw1–Pitch1 distances,
+lift folding, leg width, pivot position), joint limits and masses.
+
+### Hip joint layout (Yaw1–Pitch1)
+
+| Layout | Where Pitch1 sits | Axes | Set with |
+|---|---|---|---|
+| `offset` (default) | beside Yaw1, just outside the plate, pitch axis at the mid-height of the yaw actuator | do not meet: the pitch axis is a horizontal distance away from the yaw axis | `Advanced: Offset layout: Yaw1–Pitch1 axis distance` (0 = one actuator diameter) |
+| `cross-axis` | stacked on top of Yaw1, centred over its axis (a post fills any gap between the two) | intersect: the pitch axis crosses the yaw axis | `Advanced: Cross-axis layout: Yaw1 actuator top to Pitch1 axis` (0 = one actuator diameter) |
+
+With the cross-axis layout the hip is higher (by half an actuator thickness plus that distance), and the thigh starts directly above the
+yaw actuator, so it can only point downward until it touches the yaw actuator. A distance of one diameter lets the thigh point about
+50° below horizontal; half a diameter (Pitch1 resting directly on Yaw1) only about 20°, which is too little for the planned gaits with the
+default links. The hole cross-section check counts the stacked pitch actuators as part of the body. With the built-in examples and the
+default dimensions, `offset` passes 11 of 12 tasks and `cross-axis` 10 of 12 (the higher hip needs longer legs at high sills).
 
 ### Modelling assumptions
 
@@ -176,6 +188,7 @@ node tools/plan.mjs --list                                   # environments and 
 node tools/plan.mjs --env cell-A --task hole -v              # plan one task without a browser
 node tools/plan.mjs --all --params robot_params.json         # success/failure table for every task
 node tools/plan.mjs --env cell-B --task hole --set L1=500 --set L2=600
+node tools/plan.mjs --all --examples --set hipJoint=cross       # compare hip joint layouts (offset | cross)
 node tools/plan.mjs --all --envs my_environments.csv         # use another environment table
 
 npm install                                                  # once; needed for batch video export (puppeteer-core)
@@ -213,9 +226,9 @@ node tests/run_all.mjs      # needs python3 with mujoco, numpy, scipy
 ```
 
 - Collision test (GJK) compared with MuJoCo distances on random shape pairs
-- Exported URDF loaded in MuJoCo: link poses, centre of mass and mass compared with the JS model
+- Exported URDF loaded in MuJoCo: link poses, centre of mass and mass compared with the JS model (both hip joint layouts)
 - Whole planned trajectories replayed in MuJoCo with robot + environment: minimum distances must stay above the clearances, and no leg
-  joint may move in a frame without lift support
+  joint may move in a frame without lift support (both hip joint layouts)
 - Environment CSV reader: quoting, lists, defaults and error reporting
 - (optional) an environment table against the STEP files it was taken from: create the JSON with `tests/step_parts.py`, then
   `STEP_PARTS=<json> ENVS_CSV=<environments.csv> node tests/run_all.mjs`

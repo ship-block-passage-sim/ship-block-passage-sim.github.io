@@ -27,7 +27,8 @@ class Checker {
     this.r = robot; this.o = o; this.S = robot.shapes;
     this.env = geo.shapes.filter(s => !s.isFloor);
     this.allIdx = this.S.map((_, i) => i);
-    this.bodyIdx = this.S.filter(s => s.link === 0).map(s => s.idx).concat(robot.liftShapeIdx);
+    // body envelope: everything on the base link, the stowed lift and (cross-axis hip) the pitch actuators stacked on the yaw actuators
+    this.bodyIdx = this.S.filter(s => s.link === 0 || s.bodyEnvelope).map(s => s.idx).concat(robot.liftShapeIdx);
     const pairsOf = idxs => { const set = new Set(idxs); return robot.selfPairs.filter(([i, j]) => set.has(i) || set.has(j)); };
     this.legPairs = robot.legShapeIdx.map(pairsOf);
     this.liftPairs = pairsOf(robot.liftShapeIdx);
@@ -403,7 +404,7 @@ function planHole(ctx) {
   const D = P.actD, rw = robot.rw;
   const info = {};
 
-  // -- 1) heights at which the body (plate + payload + yaw actuators + stowed lift) fits through the hole
+  // -- 1) heights at which the body (plate + payload + hip actuators on the plate + stowed lift) fits through the hole
   const st = robot.newState(); G.liftStowed(st);
   for (let i = 0; i < 4; i++) st.q[5 * i + 1] = -Math.PI / 2;   // legs are not part of this check
   const span = Math.max(Math.abs(hipF), Math.abs(hipR)) + D + 40;
@@ -417,7 +418,8 @@ function planHole(ctx) {
   let bw = 0, zb = Infinity, zt = -Infinity;
   for (const i of sim.chk.bodyIdx) { const a = robot.shapes[i].aabb; bw = Math.max(bw, -a[1], a[4]); zb = Math.min(zb, a[2]); zt = Math.max(zt, a[5]); }
   info.bodyWidth = 2 * bw; info.bodyHeight = zt - zb;
-  log(`Body cross-section (plate + payload + yaw actuators + stowed lift): width ${(2 * bw).toFixed(0)} × height ${(zt - zb).toFixed(0)} mm / hole ${hole.W}×${hole.H} R${hole.R}, sill ${hole.sill}`);
+  const acts = robot.crossHip ? 'yaw + pitch actuators' : 'yaw actuators';
+  log(`Body cross-section (plate + payload + ${acts} + stowed lift): width ${(2 * bw).toFixed(0)} × height ${(zt - zb).toFixed(0)} mm / hole ${hole.W}×${hole.H} R${hole.R}, sill ${hole.sill}`);
   const neutral = (z, y) => { const s0 = robot.newState(); G.liftStowed(s0); s0.base.set([xc, y, z, yaw]); for (let i = 0; i < 4; i++) { s0.q[5 * i] = robot.yawFor(i, i < 2 ? 0 : Math.PI); s0.q[5 * i + 1] = 0.9; s0.q[5 * i + 2] = 0.6; } return s0; };
   if (!zs.length) {
     const zTry = hole.sill + hole.H / 2 - (zt + zb) / 2, s0 = neutral(zTry, yN - span - 300);

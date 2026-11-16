@@ -30,11 +30,10 @@ function buildParamForm() {
     const isAdv = gname.startsWith('Advanced');
     if (isAdv && !adv) { adv = document.createElement('details'); adv.className = 'adv'; adv.innerHTML = '<summary>Advanced settings (geometry assumptions · joint limits · masses)</summary>'; form.appendChild(adv); }
     const fs = document.createElement('fieldset'); fs.innerHTML = `<legend>${gname.replace('Advanced: ', '').replace(/^./, c => c.toUpperCase())}</legend>`;
-    for (const [key, def, label, , unit] of rows) {
+    for (const [key, def, label, , unit, options] of rows) {
       const d = document.createElement('div'); d.className = 'p';
       let input;
-      if (key === 'hipMount') input = `<select name="${key}"><option value="end">along length (end)</option><option value="side">across (side)</option></select>`;
-      else if (key === 'liftFold') input = `<select name="${key}"><option value="1">foldable</option><option value="0">fixed vertical</option></select>`;
+      if (options) input = `<select name="${key}">${options.map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select>`;
       else input = `<input type="number" name="${key}" step="${Number.isInteger(def) ? 1 : 0.1}" min="0">`;
       d.innerHTML = `<label for="p_${key}">${label}${unit ? ` <span class="u">[${unit}]</span>` : ''}</label>${input}`;
       d.lastElementChild.id = `p_${key}`; fs.appendChild(d);
@@ -58,7 +57,7 @@ function onParamsChanged() {
   S.hlCache.clear(); S.playing = false; updatePlayButton(); showFrame();
 }
 function paramSummary(p = S.params) {
-  return `Plate ${p.plateL}×${p.plateW}×${p.plateT} · actuator ⌀${p.actD}×${p.actT} · links ${p.L1}/${p.L2}/${p.L3} · payload ${p.payL}×${p.payW}×${p.payH} · lift spacing ${p.liftSX}×${p.liftSY}, legs ${p.liftLen}+${p.liftStroke}`;
+  return `Plate ${p.plateL}×${p.plateW}×${p.plateT} · actuator ⌀${p.actD}×${p.actT} · hip ${p.hipJoint === 'cross' ? 'cross-axis' : 'offset'} · links ${p.L1}/${p.L2}/${p.L3} · payload ${p.payL}×${p.payW}×${p.payH} · lift spacing ${p.liftSX}×${p.liftSY}, legs ${p.liftLen}+${p.liftStroke}`;
 }
 
 // ------------------------------------------------------------------ environment / task
@@ -191,12 +190,12 @@ function sectionSpec() {
 // ------------------------------------------------------------------ preview / manual pose
 function previewState() {
   const r = S.robot, st = r.newState(), P = r.P, m = S.manual;
-  const hip = m ? m.z : r.Ls + r.rw + P.L1 * 0.3;
+  const hip = m ? m.z : r.Ls + r.rw + P.L1 * 0.3 - r.hips[0][2];   // plate height at which the wheels touch the floor
   let x = 0, y = 0;
   if (S.task.type === 'hole') { const w = S.env.walls[S.task.wall]; x = w.holes[S.task.hole].c; y = w.y0 - P.plateL / 2 - P.actD - r.a0 - P.L1 - 250; }
   else { const ls = S.env.longis.map(l => l.c).sort((a, b) => a - b), i = ls.indexOf(S.env.longis[S.task.longi].c); x = i > 0 ? (ls[i - 1] + ls[i]) / 2 : ls[i] - 400; y = S.task.y; }
   st.base.set([x, y, hip, Math.PI / 2]);
-  const v = r.verticalShank(hip - r.rw);
+  const v = r.verticalShank(hip + r.hips[0][2] - r.rw);
   for (let i = 0; i < 4; i++) {
     const ang = (i % 2 ? -1 : 1) * (i < 2 ? (m ? m.spread : 50) : 180 - (m ? m.spread : 50)) * DEG;
     st.q[5 * i] = r.yawFor(i, ang);

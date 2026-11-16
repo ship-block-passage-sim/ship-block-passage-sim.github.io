@@ -8,13 +8,16 @@ export const NQ = 23;                       // 4 legs x 5 + fold front + fold re
 export const Q_FOLD_F = 20, Q_FOLD_R = 21, Q_SLIDE = 22;
 const DEG = Math.PI / 180;
 
-/** Parameter schema: [key, default, label, group, unit]. Groups 1-6 are the user's six input groups. */
+/** Parameter schema: [key, default, label, group, unit, options?]. Groups 1-6 are the user's six input groups.
+ *  options: [[value, text], ...] for a choice (shown as a drop-down). */
 export const PARAM_SCHEMA = [
   ['plateL', 780, 'Plate length (travel direction, X)', '1. Centre plate', 'mm'],
   ['plateW', 450, 'Plate width (Y)', '1. Centre plate', 'mm'],
   ['plateT', 25, 'Plate thickness (Z)', '1. Centre plate', 'mm'],
   ['actD', 90, 'Actuator diameter', '2. Actuator (cylinder)', 'mm'],
   ['actT', 50, 'Actuator thickness', '2. Actuator (cylinder)', 'mm'],
+  // offset: Pitch1 beside Yaw1, axes apart (by hipOffset); cross: Pitch1 stacked on Yaw1, axes intersect (hipRise above the yaw actuator)
+  ['hipJoint', 'offset', 'Hip joint layout (Yaw1–Pitch1 axes)', '2. Actuator (cylinder)', '', [['offset', 'offset'], ['cross', 'cross-axis']]],
   ['L1', 450, 'Link 1: Pitch1–Pitch2', '3. Leg links', 'mm'],
   ['L2', 450, 'Link 2: Pitch2–Yaw2', '3. Leg links', 'mm'],
   ['L3', 100, 'Link 3: Yaw2–Wheel', '3. Leg links', 'mm'],
@@ -26,12 +29,14 @@ export const PARAM_SCHEMA = [
   ['liftLen', 620, 'Leg length (retracted, pivot to foot sole)', '6. Lift legs', 'mm'],
   ['liftStroke', 300, 'Linear stroke', '6. Lift legs', 'mm'],
   // ---- advanced / assumed
-  ['hipMount', 'end', 'Yaw1 zero direction (end = along the plate length, side = across)', 'Advanced: geometry', ''],
-  ['hipOffset', 0, 'Yaw1–Pitch1 axis distance (0 = auto: one diameter)', 'Advanced: geometry', 'mm'],
+  ['hipMount', 'end', 'Yaw1 zero direction (end = along the plate length, side = across)', 'Advanced: geometry', '',
+    [['end', 'along length (end)'], ['side', 'across (side)']]],
+  ['hipOffset', 0, 'Offset layout: Yaw1–Pitch1 axis distance (0 = auto: one diameter)', 'Advanced: geometry', 'mm'],
+  ['hipRise', 0, 'Cross-axis layout: Yaw1 actuator top to Pitch1 axis (0 = auto: one diameter)', 'Advanced: geometry', 'mm'],
   ['linkD', 40, 'Link tube diameter', 'Advanced: geometry', 'mm'],
   ['wheelD', 100, 'Wheel diameter', 'Advanced: geometry', 'mm'],
   ['wheelW', 40, 'Wheel width', 'Advanced: geometry', 'mm'],
-  ['liftFold', 1, 'Folding lift legs (1 = foldable, 0 = fixed vertical)', 'Advanced: lift', ''],
+  ['liftFold', 1, 'Folding lift legs (1 = foldable, 0 = fixed vertical)', 'Advanced: lift', '', [[1, 'foldable'], [0, 'fixed vertical']]],
   ['liftSYin', 0, 'Rear pair crosswise spacing (0 = auto: nested inside the front pair)', 'Advanced: lift', 'mm'],
   ['liftLegW', 50, 'Lift leg section width', 'Advanced: lift', 'mm'],
   ['liftPivotDrop', 45, 'Plate underside to fold pivot', 'Advanced: lift', 'mm'],
@@ -69,8 +74,13 @@ export function wrapPi(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a <= -M
 export function buildRobot(params) {
   const P = { ...defaultParams(), ...params };
   for (const [k, def] of PARAM_SCHEMA) if (typeof def === 'number') P[k] = Number(P[k]);
-  const a0 = P.hipOffset > 0 ? P.hipOffset : P.actD;
   const D = P.actD, T = P.actT, rl = P.linkD / 2, rw = P.wheelD / 2;
+  // Hip joint layout (Yaw1 -> Pitch1):
+  //   offset: Pitch1 sits beside Yaw1, its axis a0 away from the yaw axis, at the mid-height of the yaw actuator (axes do not meet).
+  //   cross : Pitch1 sits on top of Yaw1, its axis crosses the yaw axis (a0 = 0), rise above the top of the yaw actuator.
+  const cross = P.hipJoint === 'cross';
+  const a0 = cross ? 0 : (P.hipOffset > 0 ? P.hipOffset : P.actD);
+  const rise = cross ? (P.hipRise > 0 ? P.hipRise : D) : 0;
   const Ls = P.L2 + P.L3;
   const fold = !!P.liftFold;
   const warnings = [];
@@ -97,9 +107,13 @@ export function buildRobot(params) {
 
   // ---- base
   // The yaw actuators stand on top of the plate, inside its corners (tangent to both plate edges from the inside).
-  // The pitch axis is at the mid-height of the yaw actuator, so the hip is plateT/2 + actT/2 above the plate centre.
+  // hips[i] is the point of the yaw axis at the height of the pitch axis (= the Yaw1 joint origin):
+  //   offset: the pitch axis is at the mid-height of the yaw actuator, plateT/2 + actT/2 above the plate centre;
+  //   cross : the pitch axis is `rise` above the top of the yaw actuator (where the two axes intersect).
   const base = addLink('base_link', -1, {});
-  const hipZ = P.plateT / 2 + T / 2;
+  const yawActZ = P.plateT / 2 + T / 2;
+  const hipZ = cross ? P.plateT / 2 + T + rise : yawActZ;
+  if (cross && rise < D / 2) warnings.push(`Cross-axis hip: the Pitch1 axis is only ${rise} mm above the yaw actuator, less than the actuator radius (${D / 2} mm): the two actuators overlap.`);
   if (D > Math.min(P.plateL, P.plateW) / 2) warnings.push('The actuator diameter is more than half of the plate width/length: the corner actuators overlap each other.');
   if (P.payH > 0 && P.payL / 2 > P.plateL / 2 - D && P.payW / 2 > P.plateW / 2 - D) warnings.push('The payload overlaps the yaw actuators standing on the plate corners: reduce the payload length or width.');
   addShape(base, 'plate', 'plate', box(P.plateL / 2, P.plateW / 2, P.plateT / 2), [0, 0, 0], [0, 0, 0], COL.plate);
@@ -121,11 +135,17 @@ export function buildRobot(params) {
   const legLinks = [];
   for (let i = 0; i < 4; i++) {
     const n = LEG_NAMES[i], g = 'leg' + i;
-    addShape(base, `${n}_yaw1_act`, 'act', cyl(D / 2, T / 2), hips[i], AX_Z, COL.act);
-    addMass(base, P.actMass, hips[i]);
+    const yawAct = [hips[i][0], hips[i][1], yawActZ];
+    addShape(base, `${n}_yaw1_act`, 'act', cyl(D / 2, T / 2), yawAct, AX_Z, COL.act);
+    addMass(base, P.actMass, yawAct);
     const hip = addLink(`${n}_hip`, base, { p: hips[i], rpy: [0, 0, yaw0[i]], jtype: 'revolute', axis: [0, 0, 1], qi: 5 * i, lower: -lim[0], upper: lim[0], jname: `${n}_yaw1`, leg: i, group: g });
-    addShape(hip, `${n}_pitch1_act`, 'act', cyl(D / 2, T / 2), [a0, 0, 0], AX_Y, COL.act);
+    // cross-axis: the pitch actuator turns with Yaw1 about its own centre, so it belongs to the body envelope (hole cross-section check)
+    addShape(hip, `${n}_pitch1_act`, 'act', cyl(D / 2, T / 2), [a0, 0, 0], AX_Y, COL.act, { bodyEnvelope: cross });
     addMass(hip, P.actMass, [a0, 0, 0]);
+    if (cross && rise > D / 2 + 1) {   // post from the top of the yaw actuator up to the pitch actuator
+      const hpost = (rise - D / 2) / 2;
+      addShape(hip, `${n}_hip_post`, 'bracket', box(D * 0.3, T * 0.4, hpost), [0, 0, -rise + hpost], AX_Z, COL.act, { bodyEnvelope: true });
+    }
     const thigh = addLink(`${n}_thigh`, hip, { p: [a0, 0, 0], jtype: 'revolute', axis: [0, 1, 0], qi: 5 * i + 1, lower: -lim[1], upper: lim[1], jname: `${n}_pitch1`, leg: i, group: g });
     addShape(thigh, `${n}_link1`, 'tube', cyl(rl, P.L1 / 2), [P.L1 / 2, 0, 0], AX_X, COL.tube);
     addShape(thigh, `${n}_pitch2_act`, 'act', cyl(D / 2, T / 2), [P.L1, 0, 0], AX_Y, COL.act);
@@ -225,7 +245,7 @@ export function buildRobot(params) {
   const liftShapeIdx = liftLinkIdx.flatMap(li => links[li].shapes.map(s => s.idx));
 
   const robot = {
-    P, a0, Ls, rw, links, shapes, selfPairs, linkAdj, hips, yaw0, legLinks, liftPairs, zPiv, Lh, warnings, totalMass,
+    P, a0, rise, crossHip: cross, Ls, rw, links, shapes, selfPairs, linkAdj, hips, yaw0, legLinks, liftPairs, zPiv, Lh, warnings, totalMass,
     legShapeIdx, liftShapeIdx, legLinkIdx, liftLinkIdx, jointLimits: lim, fold,
     /** Full forward kinematics: updates every link + shape world pose. */
     fk(st) { for (const L of links) fkLink(L, st); },

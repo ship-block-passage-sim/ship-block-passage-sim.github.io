@@ -4,7 +4,8 @@ import { toURDF, toSRDF, jointNames } from '../src/urdf.js';
 import { writeFileSync } from 'node:fs';
 const outDir = process.argv[2];
 let seed = 7; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-const variants = { default: {}, side: { hipMount: 'side', L1: 380, L2: 520, L3: 80, actD: 110, actT: 70, hipOffset: 140 }, nofold: { liftFold: 0, liftLen: 300, liftStroke: 200, plateL: 600 } };
+const variants = { default: {}, side: { hipMount: 'side', L1: 380, L2: 520, L3: 80, actD: 110, actT: 70, hipOffset: 140 }, nofold: { liftFold: 0, liftLen: 300, liftStroke: 200, plateL: 600 },
+  cross: { hipJoint: 'cross' }, cross_side: { hipJoint: 'cross', hipMount: 'side', hipRise: 140, actD: 80 } };
 const dump = {};
 for (const [vn, pv] of Object.entries(variants)) {
   const robot = buildRobot(pv);

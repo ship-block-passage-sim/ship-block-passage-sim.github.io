@@ -20,6 +20,7 @@ details.adv > summary, #manual > summary { cursor: pointer; color: var(--muted);
 .p { display: grid; grid-template-columns: minmax(0, 1fr) 86px; gap: 6px; align-items: center; margin: 3px 0; }
 .p label { font-size: 12px; overflow-wrap: anywhere; } .p .u { color: var(--muted); }
 .p input, .p select { width: 100%; text-align: right; padding: 3px 6px; }
+.p:has(> select) { grid-template-columns: minmax(0, 1fr) minmax(86px, auto); }   /* drop-downs: as wide as their longest choice */
 #warnings { color: #9a5b00; font-size: 12px; } #warnings div { background: #fff6e0; border: 1px solid #f1d58c; border-radius: 6px; padding: 5px 8px; margin: 6px 0; }
 .hint, .muted { color: var(--muted); } .hint { font-size: 11.5px; margin: 4px 0; }
 main { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; min-width: 0; }

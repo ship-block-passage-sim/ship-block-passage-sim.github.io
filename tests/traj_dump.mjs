@@ -10,7 +10,7 @@ import { BOX } from '../src/collide.js';
 import { writeFileSync } from 'node:fs';
 const [sel, tsel, out, ...rest] = process.argv.slice(2);
 const ei = rest.indexOf('--envs'); loadEnvsFromArgs(ei >= 0 ? ['--envs', rest[ei + 1]] : ['--examples'], { quiet: true });
-const kv = rest.filter((a, i) => a.includes('=') && i !== ei + 1);
+const kv = rest.filter((a, i) => a.includes('=') && !(ei >= 0 && i === ei + 1));
 const params = {}; for (const a of kv) { const [k, v] = a.split('='); params[k] = isNaN(+v) ? v : +v; }
 const env = listEnvs().find(e => e.id.includes(sel));
 if (!env) { console.error(`No environment matches "${sel}"`); process.exit(1); }

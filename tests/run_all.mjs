@@ -20,9 +20,10 @@ step('Collision test (GJK) vs MuJoCo', [['node', join(here, 'gjk_pairs.mjs'), '6
 step('URDF export / forward kinematics vs MuJoCo', [['node', join(here, 'fk_dump.mjs'), tmp], ['python3', join(here, 'fk_check.py'), tmp]]);
 step('Environment CSV parser', [['node', join(here, 'csv_check.mjs')]]);
 if (process.env.STEP_PARTS && process.env.ENVS_CSV) step('Environment table vs STEP', [['node', join(here, 'env_check.mjs'), process.env.STEP_PARTS, process.env.ENVS_CSV]]);
-for (const [env, task] of [['example/cell-A', 'hole'], ['example/two-holes', 'hole:0:1'], ['example/cell-B', 'longi'], ['example/flat-bar-panel', 'longi']]) {
+for (const [env, task, ...params] of [['example/cell-A', 'hole'], ['example/two-holes', 'hole:0:1'], ['example/cell-B', 'longi'], ['example/flat-bar-panel', 'longi'],
+  ['example/two-holes', 'hole:0:1', 'hipJoint=cross'], ['example/cell-B', 'longi', 'hipJoint=cross']]) {
   const f = join(tmp, `traj_${results.length}.json`);
-  step(`Planned trajectory replay (MuJoCo): ${env} ${task}`, [['node', join(here, 'traj_dump.mjs'), env, task, f], ['python3', join(here, 'traj_check.py'), f]]);
+  step(`Planned trajectory replay (MuJoCo): ${env} ${task}${params.length ? ' ' + params.join(' ') : ''}`, [['node', join(here, 'traj_dump.mjs'), env, task, f, ...params], ['python3', join(here, 'traj_check.py'), f]]);
 }
 console.log('\n=== Summary');
 for (const [n, ok] of results) console.log(`${ok ? '  OK  ' : ' FAIL '} ${n}`);
